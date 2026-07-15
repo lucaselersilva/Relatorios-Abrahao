@@ -3,14 +3,30 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
+import { ErrorBoundary, ErrorScreen } from "./components/ErrorBoundary.jsx";
+import { supabaseConfigError } from "./lib/supabaseClient.js";
 import "./index.css";
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
-  </React.StrictMode>
-);
+const root = ReactDOM.createRoot(document.getElementById("root"));
+
+// Sem as variáveis do Supabase, nada funciona — mostramos o motivo em vez de
+// deixar a app quebrar com uma tela branca.
+if (supabaseConfigError) {
+  root.render(
+    <React.StrictMode>
+      <ErrorScreen title="Configuração incompleta" message={supabaseConfigError} />
+    </React.StrictMode>
+  );
+} else {
+  root.render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <AuthProvider>
+            <App />
+          </AuthProvider>
+        </BrowserRouter>
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+}
