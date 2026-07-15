@@ -1,0 +1,46 @@
+{
+  "name": "portal-abrahao",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n web,api -c blue,green \"vite\" \"node --watch server/index.js\"",
+    "dev:web": "vite",
+    "dev:api": "node --watch server/index.js",
+    "build": "vite build",
+    "preview": "vite preview",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "db:seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.111.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "@vercel/blob": "^2.6.1",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "docx": "^9.7.1",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^0.454.0",
+    "multer": "^2.2.0",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.22.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^10.0.3",
+    "postcss": "^8.4.49",
+    "prisma": "^7.8.0",
+    "tailwindcss": "^3.4.15",
+    "vite": "^5.4.11"
+  }
+}

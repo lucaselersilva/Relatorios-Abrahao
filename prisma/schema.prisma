@@ -1,0 +1,93 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+
+  uploads Upload[]
+  reports Report[]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  nome      String
+  createdAt DateTime @default(now())
+
+  uploads Upload[]
+  reports Report[]
+}
+
+model Upload {
+  id            String   @id @default(cuid())
+  client        Client   @relation(fields: [clientId], references: [id])
+  clientId      String
+  mesReferencia String
+  fileName      String
+  fileUrl       String
+  uploadedAt    DateTime @default(now())
+  uploadedBy    User?    @relation(fields: [uploadedById], references: [id])
+  uploadedById  String?
+
+  processos Processo[]
+  reports   Report[]
+
+  @@unique([clientId, mesReferencia])
+}
+
+model Processo {
+  id            String   @id @default(cuid())
+  upload        Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  uploadId      String
+  numero        String
+  parte         String?
+  area          String?
+  valor         Decimal? @db.Decimal(18, 2)
+  provisao      Decimal? @db.Decimal(18, 2)
+  status        String?
+  probabilidade String?
+
+  @@index([uploadId, numero])
+}
+
+model Report {
+  id            String    @id @default(cuid())
+  client        Client    @relation(fields: [clientId], references: [id])
+  clientId      String
+  upload        Upload    @relation(fields: [uploadId], references: [id])
+  uploadId      String
+  mesReferencia String
+  status        String    @default("rascunho") // rascunho | pronto
+  movimentacoes Json?
+  narrativas    Json?
+  selecionados  Json?
+  docxUrl       String?
+  createdBy     User?     @relation(fields: [createdById], references: [id])
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  finalizedAt   DateTime?
+
+  attachments Attachment[]
+}
+
+model Attachment {
+  id             String   @id @default(cuid())
+  report         Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId       String
+  processoNumero String
+  fileName       String
+  fileUrl        String
+  extractedText  String?
+  uploadedAt     DateTime @default(now())
+}
