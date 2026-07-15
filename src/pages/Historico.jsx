@@ -29,6 +29,15 @@ export default function Historico() {
     api.listReports().then(setReports).catch(console.error).finally(() => setLoading(false));
   }, []);
 
+  const handleDownload = async (id) => {
+    try {
+      const url = await api.getDownloadUrl(id);
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const filtrados = reports.filter((r) => r.cliente.toLowerCase().includes(busca.toLowerCase()));
 
   return (
@@ -86,12 +95,12 @@ export default function Historico() {
                   <td className="px-5 py-3.5">
                     <div className="flex items-center justify-end gap-3">
                       {h.status === "pronto" ? (
-                        <a
-                          href={api.downloadUrl(h.id)}
+                        <button
+                          onClick={() => handleDownload(h.id)}
                           className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
                         >
                           <Download size={13} /> Baixar
-                        </a>
+                        </button>
                       ) : (
                         <button
                           onClick={() => navigate(`/relatorios/novo?reportId=${h.id}`)}

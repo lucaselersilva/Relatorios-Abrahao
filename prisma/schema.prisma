@@ -9,16 +9,9 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String?
-  createdAt    DateTime @default(now())
-
-  uploads Upload[]
-  reports Report[]
-}
+// Usuários são gerenciados pelo Supabase Auth (schema auth.users), fora do
+// Prisma. Uploads/Reports guardam email/nome do autor como snapshot no
+// momento da criação em vez de uma relação para essa tabela.
 
 model Client {
   id        String   @id @default(cuid())
@@ -30,15 +23,15 @@ model Client {
 }
 
 model Upload {
-  id            String   @id @default(cuid())
-  client        Client   @relation(fields: [clientId], references: [id])
-  clientId      String
-  mesReferencia String
-  fileName      String
-  fileUrl       String
-  uploadedAt    DateTime @default(now())
-  uploadedBy    User?    @relation(fields: [uploadedById], references: [id])
-  uploadedById  String?
+  id             String   @id @default(cuid())
+  client         Client   @relation(fields: [clientId], references: [id])
+  clientId       String
+  mesReferencia  String
+  fileName       String
+  fileKey        String
+  uploadedAt     DateTime @default(now())
+  uploadedByEmail String?
+  uploadedByName  String?
 
   processos Processo[]
   reports   Report[]
@@ -62,21 +55,21 @@ model Processo {
 }
 
 model Report {
-  id            String    @id @default(cuid())
-  client        Client    @relation(fields: [clientId], references: [id])
-  clientId      String
-  upload        Upload    @relation(fields: [uploadId], references: [id])
-  uploadId      String
-  mesReferencia String
-  status        String    @default("rascunho") // rascunho | pronto
-  movimentacoes Json?
-  narrativas    Json?
-  selecionados  Json?
-  docxUrl       String?
-  createdBy     User?     @relation(fields: [createdById], references: [id])
-  createdById   String?
-  createdAt     DateTime  @default(now())
-  finalizedAt   DateTime?
+  id             String    @id @default(cuid())
+  client         Client    @relation(fields: [clientId], references: [id])
+  clientId       String
+  upload         Upload    @relation(fields: [uploadId], references: [id])
+  uploadId       String
+  mesReferencia  String
+  status         String    @default("rascunho") // rascunho | pronto
+  movimentacoes  Json?
+  narrativas     Json?
+  selecionados   Json?
+  docxKey        String?
+  createdByEmail String?
+  createdByName  String?
+  createdAt      DateTime  @default(now())
+  finalizedAt    DateTime?
 
   attachments Attachment[]
 }
@@ -87,7 +80,7 @@ model Attachment {
   reportId       String
   processoNumero String
   fileName       String
-  fileUrl        String
+  fileKey        String
   extractedText  String?
   uploadedAt     DateTime @default(now())
 }

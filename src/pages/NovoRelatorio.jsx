@@ -171,6 +171,15 @@ export default function NovoRelatorio() {
     }
   };
 
+  const handleDownload = async () => {
+    try {
+      const url = await api.getDownloadUrl(reportFinal.id);
+      window.open(url, "_blank");
+    } catch (err) {
+      setErro(err.message || "Erro ao baixar relatório");
+    }
+  };
+
   const totalAnexos = useMemo(() => Object.values(attachments).flat().length, [attachments]);
 
   if (loadingResume) {
@@ -523,12 +532,12 @@ export default function NovoRelatorio() {
                 </div>
               </div>
               <div className="px-6 pb-6 flex gap-3">
-                <a
-                  href={api.downloadUrl(reportFinal.id)}
+                <button
+                  onClick={handleDownload}
                   className="flex-1 flex items-center justify-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#1c3a63] transition-colors"
                 >
                   <Download size={14} /> Baixar relatório (.docx)
-                </a>
+                </button>
                 <button
                   onClick={() => navigate("/historico")}
                   className="flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#44546A] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"

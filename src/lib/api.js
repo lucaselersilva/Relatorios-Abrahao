@@ -1,9 +1,15 @@
+import { supabase } from "./supabaseClient.js";
+
 async function request(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: "include",
-    headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
-    ...options,
-  });
+  const { data } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+
+  const headers = {
+    ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  };
+
+  const res = await fetch(path, { ...options, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Erro ${res.status}`);
@@ -13,10 +19,6 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  login: (email, password) => request("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
-  logout: () => request("/api/auth/logout", { method: "POST" }),
-  me: () => request("/api/auth/me"),
-
   listClients: () => request("/api/clients"),
   createClient: (nome) => request("/api/clients", { method: "POST", body: JSON.stringify({ nome }) }),
 
@@ -47,5 +49,5 @@ export const api = {
 
   finalizeReport: (reportId) => request(`/api/reports/${reportId}/finalize`, { method: "POST" }),
 
-  downloadUrl: (reportId) => `/api/reports/${reportId}/download`,
+  getDownloadUrl: async (reportId) => (await request(`/api/reports/${reportId}/download`)).url,
 };
