@@ -75,6 +75,7 @@ export default function Historico() {
             <thead>
               <tr className="border-b border-[#EEF0F3] text-[11px] uppercase tracking-wide text-[#9AA2AF]">
                 <th className="px-5 py-3 font-medium">Cliente</th>
+                <th className="px-5 py-3 font-medium">Versão</th>
                 <th className="px-5 py-3 font-medium">Mês de referência</th>
                 <th className="px-5 py-3 font-medium">Gerado em</th>
                 <th className="px-5 py-3 font-medium">Responsável</th>
@@ -85,7 +86,23 @@ export default function Historico() {
             <tbody>
               {filtrados.map((h, i) => (
                 <tr key={h.id} className={`text-[13px] ${i !== filtrados.length - 1 ? "border-b border-[#F3F4F6]" : ""}`}>
-                  <td className="px-5 py-3.5 font-medium text-[#1C2430]">{h.cliente}</td>
+                  <td className="px-5 py-3.5 font-medium text-[#1C2430]">
+                    {h.clienteId ? (
+                      <button
+                        onClick={() => navigate(`/clientes/${h.clienteId}`)}
+                        className="hover:text-[#142B4B] hover:underline text-left"
+                      >
+                        {h.cliente}
+                      </button>
+                    ) : (
+                      h.cliente
+                    )}
+                  </td>
+                  <td className="px-5 py-3.5 text-[#7A8394]">
+                    <span className="inline-flex items-center justify-center text-[11px] font-semibold px-2 py-0.5 rounded-md bg-[#F0EDE3] text-[#142B4B]">
+                      v{h.versao ?? 1}
+                    </span>
+                  </td>
                   <td className="px-5 py-3.5 text-[#44546A]">{h.mes}</td>
                   <td className="px-5 py-3.5 text-[#7A8394]">{new Date(h.geradoEm).toLocaleDateString("pt-BR")}</td>
                   <td className="px-5 py-3.5 text-[#7A8394]">{h.autor}</td>

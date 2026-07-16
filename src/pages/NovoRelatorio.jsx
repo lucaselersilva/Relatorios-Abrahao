@@ -37,12 +37,14 @@ export default function NovoRelatorio() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const resumeId = searchParams.get("reportId");
+  const preClientId = searchParams.get("clientId");
 
   const [step, setStep] = useState(0);
   const [loadingResume, setLoadingResume] = useState(!!resumeId);
 
   const [clients, setClients] = useState([]);
-  const [clientId, setClientId] = useState("");
+  const [clientId, setClientId] = useState(preClientId || "");
+  const [versao, setVersao] = useState(null);
   const [novoClienteNome, setNovoClienteNome] = useState("");
   const [mesReferencia, setMesReferencia] = useState("");
   const [clienteNomeExibicao, setClienteNomeExibicao] = useState("");
@@ -72,6 +74,7 @@ export default function NovoRelatorio() {
         setClienteNomeExibicao(r.client.nome);
         setMesReferencia(r.mesReferencia);
         setKpis(r.kpis);
+        setVersao(r.versao ?? null);
         setMovimentacoes(r.movimentacoes ?? []);
         const attByNumero = {};
         for (const a of r.attachments) {
@@ -112,6 +115,7 @@ export default function NovoRelatorio() {
       const result = await api.uploadSpreadsheet(finalClientId, mesReferencia, file);
       setReportId(result.reportId);
       setKpis(result.kpis);
+      setVersao(result.versao ?? null);
       setMovimentacoes(result.movimentacoes);
       setStep(2);
     } catch (err) {
@@ -217,7 +221,9 @@ export default function NovoRelatorio() {
           })}
         </div>
         <div className="text-[11px] text-[#9AA2AF]">
-          {clienteNomeExibicao ? `${clienteNomeExibicao} · ${mesReferencia}` : ""}
+          {clienteNomeExibicao
+            ? `${clienteNomeExibicao} · ${mesReferencia}${versao ? ` · versão ${versao}` : ""}`
+            : ""}
         </div>
       </div>
 
@@ -232,9 +238,12 @@ export default function NovoRelatorio() {
         {step === 0 && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
-              Para qual cliente é este relatório?
+              Nova versão do relatório
             </h1>
-            <p className="text-[13px] text-[#7A8394] mb-6">Selecione um cliente existente ou cadastre um novo.</p>
+            <p className="text-[13px] text-[#7A8394] mb-6">
+              Selecione o cliente (ou cadastre um novo). Cada envio de planilha gera uma nova versão do relatório
+              daquele cliente, mantendo as anteriores no histórico.
+            </p>
 
             <label className="block text-[12px] font-medium text-[#44546A] mb-1">Cliente</label>
             <select
@@ -515,7 +524,9 @@ export default function NovoRelatorio() {
                   RELATÓRIO EXECUTIVO
                 </div>
                 <div className="text-[#9C7C38] text-[13px] font-semibold mt-1">{clienteNomeExibicao.toUpperCase()}</div>
-                <div className="text-white/60 text-[11px] mt-1">Referência: {mesReferencia}</div>
+                <div className="text-white/60 text-[11px] mt-1">
+                  Referência: {mesReferencia}{versao ? ` · Versão ${versao}` : ""}
+                </div>
               </div>
               <div className="px-6 py-5 flex flex-col gap-3">
                 <div className="flex items-center gap-2 text-[13px] text-[#44546A]">

@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { Building2, Plus, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Building2, Plus, Loader2, ChevronRight, FileText } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const NAVY = "#142B4B";
 
 export default function Clientes() {
+  const navigate = useNavigate();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [novoNome, setNovoNome] = useState("");
@@ -38,7 +40,9 @@ export default function Clientes() {
       <h1 className="text-[22px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
         Clientes
       </h1>
-      <p className="text-[13px] text-[#7A8394] mb-6">Clientes do escritório para os quais relatórios podem ser gerados.</p>
+      <p className="text-[13px] text-[#7A8394] mb-6">
+        Clientes do escritório. Abra um cliente para ver as versões do relatório e as movimentações ao longo do tempo.
+      </p>
 
       <form onSubmit={handleCriar} className="flex items-center gap-2 mb-6">
         <input
@@ -64,16 +68,30 @@ export default function Clientes() {
           <div className="px-5 py-10 text-center text-[13px] text-[#9AA2AF]">Nenhum cliente cadastrado ainda.</div>
         ) : (
           clients.map((c, i) => (
-            <div
+            <button
               key={c.id}
-              className={`flex items-center gap-3 px-5 py-3.5 ${i !== clients.length - 1 ? "border-b border-[#F3F4F6]" : ""}`}
+              onClick={() => navigate(`/clientes/${c.id}`)}
+              className={`w-full text-left flex items-center gap-3 px-5 py-3.5 hover:bg-[#FAFAFB] transition-colors ${
+                i !== clients.length - 1 ? "border-b border-[#F3F4F6]" : ""
+              }`}
             >
-              <Building2 size={16} className="text-[#9AA2AF]" />
-              <div className="text-[13px] font-medium text-[#1C2430]">{c.nome}</div>
-              <div className="text-[11px] text-[#9AA2AF] ml-auto">
-                Cliente desde {new Date(c.createdAt).toLocaleDateString("pt-BR")}
+              <Building2 size={16} className="text-[#9AA2AF] shrink-0" />
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium text-[#1C2430]">{c.nome}</div>
+                <div className="text-[11px] text-[#9AA2AF] mt-0.5">
+                  Cliente desde {new Date(c.createdAt).toLocaleDateString("pt-BR")}
+                </div>
               </div>
-            </div>
+              <div className="ml-auto flex items-center gap-4 shrink-0">
+                <div className="flex items-center gap-1.5 text-[11px] text-[#7A8394]">
+                  <FileText size={12} />
+                  {c.totalVersoes > 0
+                    ? `${c.totalVersoes} versão(ões)${c.ultimaVersao ? ` · ${c.ultimaVersao.mes}` : ""}`
+                    : "Sem relatórios"}
+                </div>
+                <ChevronRight size={15} className="text-[#C4CAD3]" />
+              </div>
+            </button>
           ))
         )}
       </div>

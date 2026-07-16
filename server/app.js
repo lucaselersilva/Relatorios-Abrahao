@@ -5,7 +5,7 @@ import { prisma } from "../lib/db.js";
 import { requireAuth } from "../lib/auth.js";
 import { uploadFile, getSignedUrl } from "../lib/storage.js";
 import { parseSpreadsheet } from "../lib/xlsx-parser.js";
-import { computeDiff, computeKpis } from "../lib/diff.js";
+import { computeDiff, computeKpis, formatMoeda } from "../lib/diff.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 
@@ -24,13 +24,53 @@ async function extractPdfText(buffer) {
   }
 }
 
+/** Conta as movimentações de uma lista de relatórios, quebrando por tipo. */
+function resumirMovimentacoes(relatorios) {
+  const porTipo = { novo: 0, movimentacao: 0, acordo: 0 };
+  let total = 0;
+  let valor = 0;
+  for (const r of relatorios) {
+    for (const m of r.movimentacoes ?? []) {
+      total += 1;
+      porTipo[m.tipo] = (porTipo[m.tipo] ?? 0) + 1;
+      if (typeof m.valor === "number") valor += m.valor;
+    }
+  }
+  return { total, porTipo, valor };
+}
+
 // ---------------------------------------------------------------------------
 // Clientes
 // ---------------------------------------------------------------------------
 
 app.get("/api/clients", requireAuth, async (req, res) => {
-  const clients = await prisma.client.findMany({ orderBy: { nome: "asc" } });
-  res.json(clients);
+  const clients = await prisma.client.findMany({
+    orderBy: { nome: "asc" },
+    include: {
+      _count: { select: { reports: true } },
+      reports: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { mesReferencia: true, status: true, createdAt: true, finalizedAt: true },
+      },
+    },
+  });
+
+  res.json(
+    clients.map((c) => ({
+      id: c.id,
+      nome: c.nome,
+      createdAt: c.createdAt,
+      totalVersoes: c._count.reports,
+      ultimaVersao: c.reports[0]
+        ? {
+            mes: c.reports[0].mesReferencia,
+            status: c.reports[0].status,
+            em: c.reports[0].finalizedAt ?? c.reports[0].createdAt,
+          }
+        : null,
+    }))
+  );
 });
 
 app.post("/api/clients", requireAuth, async (req, res) => {
@@ -41,19 +81,78 @@ app.post("/api/clients", requireAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Página do cliente — versões do relatório + movimentações ao longo do tempo
+// ---------------------------------------------------------------------------
+
+app.get("/api/clients/:id", requireAuth, async (req, res) => {
+  const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado" });
+
+  // Ordem crescente para numerar as versões (v1 = primeiro relatório do cliente).
+  const reports = await prisma.report.findMany({
+    where: { clientId: client.id },
+    orderBy: { createdAt: "asc" },
+    include: { _count: { select: { attachments: true } } },
+  });
+
+  const versoes = reports.map((r, i) => {
+    const resumo = resumirMovimentacoes([r]);
+    return {
+      id: r.id,
+      versao: i + 1,
+      mesReferencia: r.mesReferencia,
+      status: r.status,
+      createdAt: r.createdAt,
+      finalizedAt: r.finalizedAt,
+      autor: r.createdByName || r.createdByEmail || "-",
+      docxDisponivel: !!r.docxKey,
+      totalAnexos: r._count.attachments,
+      totalMovimentacoes: resumo.total,
+      porTipo: resumo.porTipo,
+      valorMovimentado: resumo.valor,
+    };
+  });
+
+  // KPIs atuais = do upload mais recente do cliente.
+  const ultimoUpload = await prisma.upload.findFirst({
+    where: { clientId: client.id },
+    orderBy: { uploadedAt: "desc" },
+    include: { processos: true },
+  });
+  const kpisAtuais = ultimoUpload ? computeKpis(ultimoUpload.processos) : null;
+
+  res.json({
+    client: { id: client.id, nome: client.nome, createdAt: client.createdAt },
+    kpisAtuais,
+    versoes: [...versoes].reverse(), // mais recente primeiro para exibição
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Relatórios — histórico
 // ---------------------------------------------------------------------------
 
 app.get("/api/reports", requireAuth, async (req, res) => {
+  // Ordem crescente para numerar as versões por cliente antes de exibir desc.
   const reports = await prisma.report.findMany({
     include: { client: true },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
   });
+
+  const versaoPorId = {};
+  const contador = {};
+  for (const r of reports) {
+    contador[r.clientId] = (contador[r.clientId] ?? 0) + 1;
+    versaoPorId[r.id] = contador[r.clientId];
+  }
+
   res.json(
-    reports.map((r) => ({
+    [...reports].reverse().map((r) => ({
       id: r.id,
+      clienteId: r.clientId,
       cliente: r.client.nome,
       mes: r.mesReferencia,
+      versao: versaoPorId[r.id],
       geradoEm: r.finalizedAt ?? r.createdAt,
       status: r.status,
       autor: r.createdByName || r.createdByEmail || "-",
@@ -68,8 +167,13 @@ app.get("/api/reports/:id", requireAuth, async (req, res) => {
   });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
+  // Versão = posição do relatório na sequência do cliente (v1 = o primeiro).
+  const versao = await prisma.report.count({
+    where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
+  });
+
   const processos = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
-  res.json({ ...report, kpis: computeKpis(processos) });
+  res.json({ ...report, versao, kpis: computeKpis(processos) });
 });
 
 // ---------------------------------------------------------------------------
@@ -124,7 +228,10 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
     },
   });
 
-  res.status(201).json({ reportId: report.id, kpis, movimentacoes });
+  // Número da versão deste relatório na linha do tempo do cliente.
+  const versao = await prisma.report.count({ where: { clientId } });
+
+  res.status(201).json({ reportId: report.id, versao, kpis, movimentacoes });
 });
 
 // ---------------------------------------------------------------------------
@@ -213,9 +320,14 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
 
   const kpis = computeKpis(await prisma.processo.findMany({ where: { uploadId: report.uploadId } }));
 
+  const versao = await prisma.report.count({
+    where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
+  });
+
   const buffer = await generateReportDocx({
     cliente: report.client.nome,
     mesReferencia: report.mesReferencia,
+    versao,
     kpis,
     narrativas: report.narrativas ?? [],
     movimentacoes: report.movimentacoes ?? [],

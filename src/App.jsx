@@ -6,6 +6,7 @@ import Layout from "./components/Layout.jsx";
 import Login from "./pages/Login.jsx";
 import Historico from "./pages/Historico.jsx";
 import Clientes from "./pages/Clientes.jsx";
+import ClienteDetalhe from "./pages/ClienteDetalhe.jsx";
 import NovoRelatorio from "./pages/NovoRelatorio.jsx";
 
 function ProtectedRoute({ children }) {
@@ -36,6 +37,7 @@ export default function App() {
       >
         <Route path="/historico" element={<Historico />} />
         <Route path="/clientes" element={<Clientes />} />
+        <Route path="/clientes/:id" element={<ClienteDetalhe />} />
         <Route path="/relatorios/novo" element={<NovoRelatorio />} />
         <Route path="/" element={<Navigate to="/historico" replace />} />
       </Route>
