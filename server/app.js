@@ -39,6 +39,32 @@ function resumirMovimentacoes(relatorios) {
   return { total, porTipo, valor };
 }
 
+/**
+ * KPIs atuais, KPIs do mês anterior (para as setas de variação) e panorama
+ * da carteira (por área + maiores exposições) de um relatório. Usado tanto na
+ * finalização (.docx) quanto na visualização em tela do relatório — as duas
+ * telas mostram exatamente os mesmos números. `report` precisa incluir `upload`.
+ */
+async function computeReportInsights(report) {
+  const processosAtuais = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
+  const kpis = computeKpis(processosAtuais);
+  const panorama = computePanorama(processosAtuais);
+
+  const uploadAnterior = await prisma.upload.findFirst({
+    where: { clientId: report.clientId, uploadedAt: { lt: report.upload.uploadedAt } },
+    orderBy: { uploadedAt: "desc" },
+    include: { processos: true },
+  });
+  const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
+
+  return { kpis, kpisAnterior, panorama };
+}
+
+/** Nome de arquivo amigável para o .docx final: cliente + mês de referência. */
+function reportFileName(cliente, mesReferencia) {
+  return `Relatorio_${cliente.replace(/\s+/g, "_")}_${mesReferencia.replace(/\//g, "-")}.docx`;
+}
+
 // ---------------------------------------------------------------------------
 // Clientes
 // ---------------------------------------------------------------------------
@@ -163,7 +189,7 @@ app.get("/api/reports", requireAuth, async (req, res) => {
 app.get("/api/reports/:id", requireAuth, async (req, res) => {
   const report = await prisma.report.findUnique({
     where: { id: req.params.id },
-    include: { client: true, attachments: true },
+    include: { client: true, attachments: true, upload: true },
   });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
@@ -172,8 +198,8 @@ app.get("/api/reports/:id", requireAuth, async (req, res) => {
     where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
   });
 
-  const processos = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
-  res.json({ ...report, versao, kpis: computeKpis(processos) });
+  const { kpis, kpisAnterior, panorama } = await computeReportInsights(report);
+  res.json({ ...report, versao, kpis, kpisAnterior, panorama });
 });
 
 // ---------------------------------------------------------------------------
@@ -327,23 +353,11 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
   });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
-  const processosAtuais = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
-  const kpis = computeKpis(processosAtuais);
-  const panorama = computePanorama(processosAtuais);
-
   const versao = await prisma.report.count({
     where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
   });
 
-  // Upload anterior ao deste relatório (mesmo cliente) — usado só para as
-  // setas de variação dos KPIs no relatório; se não houver, os cards
-  // aparecem sem comparação (primeira versão do cliente).
-  const uploadAnterior = await prisma.upload.findFirst({
-    where: { clientId: report.clientId, uploadedAt: { lt: report.upload.uploadedAt } },
-    orderBy: { uploadedAt: "desc" },
-    include: { processos: true },
-  });
-  const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
+  const { kpis, kpisAnterior, panorama } = await computeReportInsights(report);
 
   const buffer = await generateReportDocx({
     cliente: report.client.nome,
@@ -357,7 +371,7 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
     totalAnexos: report.attachments.length,
   });
 
-  const fileName = `Relatorio_${report.client.nome.replace(/\s+/g, "_")}_${report.mesReferencia.replace(/\//g, "-")}.docx`;
+  const fileName = reportFileName(report.client.nome, report.mesReferencia);
   const { key: docxKey } = await uploadFile(buffer, fileName, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
   const updated = await prisma.report.update({
@@ -369,9 +383,10 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
 });
 
 app.get("/api/reports/:id/download", requireAuth, async (req, res) => {
-  const report = await prisma.report.findUnique({ where: { id: req.params.id } });
+  const report = await prisma.report.findUnique({ where: { id: req.params.id }, include: { client: true } });
   if (!report?.docxKey) return res.status(404).json({ error: "Relatório ainda não foi finalizado" });
-  const url = await getSignedUrl(report.docxKey);
+  const fileName = reportFileName(report.client.nome, report.mesReferencia);
+  const url = await getSignedUrl(report.docxKey, undefined, fileName);
   res.json({ url });
 });
 

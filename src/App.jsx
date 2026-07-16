@@ -8,6 +8,7 @@ import Historico from "./pages/Historico.jsx";
 import Clientes from "./pages/Clientes.jsx";
 import ClienteDetalhe from "./pages/ClienteDetalhe.jsx";
 import NovoRelatorio from "./pages/NovoRelatorio.jsx";
+import RelatorioVisualizar from "./pages/RelatorioVisualizar.jsx";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/clientes" element={<Clientes />} />
         <Route path="/clientes/:id" element={<ClienteDetalhe />} />
         <Route path="/relatorios/novo" element={<NovoRelatorio />} />
+        <Route path="/relatorios/:id" element={<RelatorioVisualizar />} />
         <Route path="/" element={<Navigate to="/historico" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/historico" replace />} />

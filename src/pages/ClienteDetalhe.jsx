@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, FilePlus2, Download, ChevronRight, CheckCircle2, Loader2,
-  Building2, Layers, Paperclip, AlertTriangle, TrendingUp,
+  Building2, Layers, Paperclip, AlertTriangle, TrendingUp, Eye,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 
@@ -267,21 +267,29 @@ export default function ClienteDetalhe() {
                   <span>· {v.autor}</span>
                 </div>
               </div>
-              {v.docxDisponivel ? (
+              <div className="flex items-center gap-3 shrink-0">
                 <button
-                  onClick={() => handleDownload(v.id)}
-                  className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline shrink-0"
+                  onClick={() => navigate(`/relatorios/${v.id}`)}
+                  className="flex items-center gap-1 text-[12px] text-[#44546A] font-medium hover:underline"
                 >
-                  <Download size={13} /> Baixar
+                  <Eye size={13} /> Visualizar
                 </button>
-              ) : (
-                <button
-                  onClick={() => navigate(`/relatorios/novo?reportId=${v.id}`)}
-                  className="flex items-center gap-1 text-[12px] text-[#8A6D1F] font-medium hover:underline shrink-0"
-                >
-                  <ChevronRight size={13} /> Continuar
-                </button>
-              )}
+                {v.docxDisponivel ? (
+                  <button
+                    onClick={() => handleDownload(v.id)}
+                    className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
+                  >
+                    <Download size={13} /> Baixar
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => navigate(`/relatorios/novo?reportId=${v.id}`)}
+                    className="flex items-center gap-1 text-[12px] text-[#8A6D1F] font-medium hover:underline"
+                  >
+                    <ChevronRight size={13} /> Continuar
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

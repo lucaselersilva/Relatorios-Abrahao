@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Upload, CheckCircle2, ArrowRight, Sparkles, FileText, Paperclip, X, Download,
-  AlertTriangle, ChevronRight, Scale, Building2, Gavel, Loader2, History,
+  AlertTriangle, ChevronRight, Scale, Building2, Gavel, Loader2, History, Eye,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 
@@ -544,16 +544,22 @@ export default function NovoRelatorio() {
               </div>
               <div className="px-6 pb-6 flex gap-3">
                 <button
+                  onClick={() => navigate(`/relatorios/${reportFinal.id}`)}
+                  className="flex-1 flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
+                >
+                  <Eye size={14} /> Visualizar
+                </button>
+                <button
                   onClick={handleDownload}
                   className="flex-1 flex items-center justify-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#1c3a63] transition-colors"
                 >
-                  <Download size={14} /> Baixar relatório (.docx)
+                  <Download size={14} /> Baixar (.docx)
                 </button>
                 <button
                   onClick={() => navigate("/historico")}
                   className="flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#44546A] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
                 >
-                  <History size={14} /> Ver histórico
+                  <History size={14} /> Histórico
                 </button>
               </div>
             </div>

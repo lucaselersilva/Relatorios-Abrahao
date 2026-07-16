@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FilePlus2, Search, Download, ChevronRight, CheckCircle2, Loader2 } from "lucide-react";
+import { FilePlus2, Search, Download, ChevronRight, CheckCircle2, Loader2, Eye } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const NAVY = "#142B4B";
@@ -111,6 +111,12 @@ export default function Historico() {
                   </td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => navigate(`/relatorios/${h.id}`)}
+                        className="flex items-center gap-1 text-[12px] text-[#44546A] font-medium hover:underline"
+                      >
+                        <Eye size={13} /> Visualizar
+                      </button>
                       {h.status === "pronto" ? (
                         <button
                           onClick={() => handleDownload(h.id)}
