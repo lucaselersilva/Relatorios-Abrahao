@@ -18,7 +18,7 @@ import fs from "node:fs/promises";
 import ExcelJS from "exceljs";
 
 import { parseSpreadsheet } from "../lib/xlsx-parser.js";
-import { computeDiff, computeKpis } from "../lib/diff.js";
+import { computeDiff, computeKpis, computePanorama } from "../lib/diff.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -92,16 +92,48 @@ async function main() {
     movs.some((m) => m.tipo === "movimentacao");
   console.log(`\nComportamento do diff: ${ok ? "OK ✓ (processos sem mudança foram ignorados)" : "FALHOU ✗"}`);
 
+  const kpisAnterior = computeKpis(mes1);
+  const panorama = computePanorama(mes2);
+  console.log("\nPanorama por área:", panorama.porArea.map((a) => `${a.area} (${a.count})`).join(", "));
+  console.log("Top exposições:", panorama.topExposicoes.map((p) => `${p.parte} — ${p.valorFormatado}`).join(" | "));
+
+  const narrativasExemplo = [
+    {
+      titulo: "Aumento de exposição em processo trabalhista relevante",
+      texto:
+        "O processo movido por João da Silva teve o valor da causa atualizado de R$ 1.250.000,00 para R$ 1.500.000,00, um incremento de 20% que ainda não está refletido na provisão atual. Recomenda-se revisão da provisão junto ao departamento financeiro.",
+      fonte: "Andamento da planilha",
+    },
+    {
+      titulo: "Acordo homologado — processo de Maria Souza",
+      texto:
+        "O processo cível de Maria Souza foi encerrado por acordo homologado neste período, encerrando uma exposição de R$ 85.000,00 sem necessidade de provisão adicional.",
+      fonte: "Andamento da planilha",
+    },
+    {
+      titulo: "Novo processo distribuído — Banco Beta S/A",
+      texto:
+        "Entrou na carteira um novo processo cível envolvendo o Banco Beta S/A, com valor da causa de R$ 2.000.000,00 e provisão inicial de R$ 500.000,00. Por se tratar do maior valor individual do mês, recomenda-se acompanhamento prioritário.",
+      fonte: "Andamento da planilha",
+    },
+  ];
+
   const docx = await generateReportDocx({
     cliente: "Construtora Alfa",
     mesReferencia: "Julho/2026",
     versao: 2,
     kpis,
-    narrativas: [{ titulo: "Exemplo", texto: "Narrativa de exemplo.", fonte: "planilha" }],
+    kpisAnterior,
+    narrativas: narrativasExemplo,
     movimentacoes: movs,
-    totalAnexos: 0,
+    panorama,
+    totalAnexos: 2,
   });
   console.log(`\n.docx gerado: ${docx.length} bytes ${docx.length > 0 ? "✓" : "✗"}`);
+
+  const docxPath = path.join(OUT_DIR, "Relatorio_Construtora_Alfa_Julho_2026.docx");
+  await fs.writeFile(docxPath, docx);
+  console.log(`Salvo em: ${docxPath}`);
 
   if (!ok || docx.length === 0) process.exitCode = 1;
 }

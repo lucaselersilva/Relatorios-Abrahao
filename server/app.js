@@ -5,7 +5,7 @@ import { prisma } from "../lib/db.js";
 import { requireAuth } from "../lib/auth.js";
 import { uploadFile, getSignedUrl } from "../lib/storage.js";
 import { parseSpreadsheet } from "../lib/xlsx-parser.js";
-import { computeDiff, computeKpis, formatMoeda } from "../lib/diff.js";
+import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 
@@ -323,23 +323,37 @@ app.patch("/api/reports/:id", requireAuth, async (req, res) => {
 app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
   const report = await prisma.report.findUnique({
     where: { id: req.params.id },
-    include: { client: true, attachments: true },
+    include: { client: true, attachments: true, upload: true },
   });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
-  const kpis = computeKpis(await prisma.processo.findMany({ where: { uploadId: report.uploadId } }));
+  const processosAtuais = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
+  const kpis = computeKpis(processosAtuais);
+  const panorama = computePanorama(processosAtuais);
 
   const versao = await prisma.report.count({
     where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
   });
+
+  // Upload anterior ao deste relatório (mesmo cliente) — usado só para as
+  // setas de variação dos KPIs no relatório; se não houver, os cards
+  // aparecem sem comparação (primeira versão do cliente).
+  const uploadAnterior = await prisma.upload.findFirst({
+    where: { clientId: report.clientId, uploadedAt: { lt: report.upload.uploadedAt } },
+    orderBy: { uploadedAt: "desc" },
+    include: { processos: true },
+  });
+  const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
 
   const buffer = await generateReportDocx({
     cliente: report.client.nome,
     mesReferencia: report.mesReferencia,
     versao,
     kpis,
+    kpisAnterior,
     narrativas: report.narrativas ?? [],
     movimentacoes: report.movimentacoes ?? [],
+    panorama,
     totalAnexos: report.attachments.length,
   });
 

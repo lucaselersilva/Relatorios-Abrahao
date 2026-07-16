@@ -55,6 +55,12 @@ Isso cria em `exemplos/`:
 - `Construtora_Alfa_Julho_2026.xlsx` — mês seguinte, com: 1 valor alterado,
   1 acordo homologado, 1 processo novo e 2 processos sem mudança (que **não**
   devem aparecer no "o que mudou").
+- `Relatorio_Construtora_Alfa_Julho_2026.docx` — **abra este arquivo no Word**
+  para ver o novo layout do relatório final (capa, cards de KPI com variação
+  vs. mês anterior, gráfico de rosca por área, ranking de maiores exposições,
+  destaques da IA em cartões e tabela de movimentações com badges coloridos).
+  Não precisa rodar o app para ver o design — este arquivo já é um exemplo
+  gerado com dados fictícios.
 
 ## 4. Fluxo de teste sugerido
 
