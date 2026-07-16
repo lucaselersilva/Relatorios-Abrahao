@@ -185,6 +185,15 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
   if (!clientId || !mesReferencia) return res.status(400).json({ error: "clientId e mesReferencia são obrigatórios" });
   if (!req.file) return res.status(400).json({ error: "Arquivo da planilha é obrigatório" });
 
+  const duplicado = await prisma.upload.findUnique({
+    where: { clientId_mesReferencia: { clientId, mesReferencia } },
+  });
+  if (duplicado) {
+    return res.status(409).json({
+      error: `Já existe uma planilha enviada para este cliente em "${mesReferencia}". Use outro mês de referência para gerar uma nova versão.`,
+    });
+  }
+
   let processosAtuais;
   try {
     processosAtuais = await parseSpreadsheet(req.file.buffer);
@@ -350,4 +359,22 @@ app.get("/api/reports/:id/download", requireAuth, async (req, res) => {
   if (!report?.docxKey) return res.status(404).json({ error: "Relatório ainda não foi finalizado" });
   const url = await getSignedUrl(report.docxKey);
   res.json({ url });
+});
+
+// ---------------------------------------------------------------------------
+// Tratamento de erros — sempre responde JSON (facilita o diagnóstico nos testes)
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error("Erro não tratado:", err);
+  if (res.headersSent) return next(err);
+  const isMulter = err?.name === "MulterError";
+  const status = isMulter ? 400 : 500;
+  const message = isMulter
+    ? err.code === "LIMIT_FILE_SIZE"
+      ? "Arquivo excede o limite de 25 MB."
+      : `Erro no upload do arquivo: ${err.message}`
+    : err?.message || "Erro interno do servidor.";
+  res.status(status).json({ error: message });
 });
