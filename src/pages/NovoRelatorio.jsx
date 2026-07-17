@@ -3,9 +3,10 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Upload, CheckCircle2, ArrowRight, Sparkles, FileText, Paperclip, X, Download,
   AlertTriangle, ChevronRight, Scale, Building2, Gavel, Loader2, History, Eye,
-  RefreshCw, Table2,
+  RefreshCw, Table2, Mail,
 } from "lucide-react";
 import { api } from "../lib/api.js";
+import EnviarEmailModal from "../components/EnviarEmailModal.jsx";
 
 const NAVY = "#142B4B";
 
@@ -250,6 +251,7 @@ export default function NovoRelatorio() {
   const [narrativas, setNarrativas] = useState([]);
   const [finalizando, setFinalizando] = useState(false);
   const [reportFinal, setReportFinal] = useState(null);
+  const [enviarOpen, setEnviarOpen] = useState(false);
   const [erro, setErro] = useState("");
 
   useEffect(() => {
@@ -894,36 +896,52 @@ export default function NovoRelatorio() {
                   <CheckCircle2 size={15} className="text-[#3F6B4F]" /> {totalAnexos} documento(s) anexado(s) e referenciado(s)
                 </div>
               </div>
-              <div className="px-6 pb-6 flex gap-3">
+              <div className="px-6 pb-6 flex flex-col gap-3">
                 <button
-                  onClick={() => navigate(`/relatorios/${reportFinal.id}`)}
-                  className="flex-1 flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
+                  onClick={() => setEnviarOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 bg-[#2F5D45] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#28503b] transition-colors"
                 >
-                  <Eye size={14} /> Visualizar
+                  <Mail size={15} /> Enviar ao cliente
                 </button>
-                <button
-                  onClick={handleDownload}
-                  className="flex-1 flex items-center justify-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#1c3a63] transition-colors"
-                >
-                  <Download size={14} /> Baixar (.docx)
-                </button>
-                <button
-                  onClick={handleDownloadPdf}
-                  className="flex-1 flex items-center justify-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#1c3a63] transition-colors"
-                >
-                  <FileText size={14} /> Baixar PDF
-                </button>
-                <button
-                  onClick={() => navigate("/historico")}
-                  className="flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#44546A] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
-                >
-                  <History size={14} /> Histórico
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => navigate(`/relatorios/${reportFinal.id}`)}
+                    className="flex-1 flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
+                  >
+                    <Eye size={14} /> Visualizar
+                  </button>
+                  <button
+                    onClick={handleDownload}
+                    className="flex-1 flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
+                  >
+                    <Download size={14} /> .docx
+                  </button>
+                  <button
+                    onClick={handleDownloadPdf}
+                    className="flex-1 flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
+                  >
+                    <FileText size={14} /> PDF
+                  </button>
+                  <button
+                    onClick={() => navigate("/historico")}
+                    className="flex items-center justify-center gap-2 border border-[#D9DCE1] text-[#44546A] text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#F5F6F8] transition-colors"
+                  >
+                    <History size={14} /> Histórico
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {enviarOpen && reportFinal && (
+        <EnviarEmailModal
+          reportId={reportFinal.id}
+          clientId={reportFinal.clientId}
+          onClose={() => setEnviarOpen(false)}
+        />
+      )}
     </div>
   );
 }

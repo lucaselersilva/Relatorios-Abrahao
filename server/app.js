@@ -10,7 +10,8 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "../lib/db.js";
 import { requireAuth } from "../lib/auth.js";
-import { uploadFile, getSignedUrl, removeFiles } from "../lib/storage.js";
+import { uploadFile, getSignedUrl, removeFiles, downloadFile } from "../lib/storage.js";
+import { emailProvider, sendEmail } from "../lib/email.js";
 import { parseSpreadsheet, normalizeMapping, CAMPOS_SISTEMA } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
 import { isPeriodoValido, periodoParaRotulo, periodoAtual } from "../lib/periodo.js";
@@ -203,6 +204,53 @@ function shareTokenValido(report) {
   return !!report?.shareTokenExpiresAt && report.shareTokenExpiresAt > new Date();
 }
 
+/**
+ * URL base pública para montar links (ex.: /r/:token) em e-mails. Ordem de
+ * preferência: PUBLIC_APP_URL (env), a origem enviada pelo frontend, e por fim
+ * a origem da requisição. Roda no Vercel sem configurar nada.
+ */
+function publicBaseUrl(req, override) {
+  const valid = (u) => typeof u === "string" && /^https?:\/\/[^\s/]+/.test(u);
+  if (valid(process.env.PUBLIC_APP_URL)) return process.env.PUBLIC_APP_URL.replace(/\/$/, "");
+  if (valid(override)) return override.replace(/\/$/, "");
+  const proto = req.headers["x-forwarded-proto"] || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${proto}://${host}`.replace(/\/$/, "");
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function emailAssunto(report) {
+  return `Relatório executivo — ${report.client.nome} — ${report.mesReferencia}`;
+}
+
+function emailTexto(report, shareUrl) {
+  return [
+    "Prezado(a),",
+    "",
+    `Segue o relatório executivo de ${report.client.nome} referente a ${report.mesReferencia}.`,
+    "",
+    "Acesse pelo link abaixo (abre no navegador, em qualquer dispositivo, sem necessidade de login):",
+    shareUrl,
+    "",
+    "Atenciosamente,",
+    "Abrahão Advogados",
+  ].join("\n");
+}
+
+function emailHtml(report, shareUrl, comPdf) {
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;color:#1C2430;font-size:14px;line-height:1.55">
+    <p>Prezado(a),</p>
+    <p>Segue o <strong>relatório executivo de ${escapeHtml(report.client.nome)}</strong> referente a <strong>${escapeHtml(report.mesReferencia)}</strong>.</p>
+    <p><a href="${escapeHtml(shareUrl)}" style="display:inline-block;background:#142B4B;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:bold">Abrir relatório</a></p>
+    <p style="color:#7A8394;font-size:12px">Ou copie e cole no navegador:<br/>${escapeHtml(shareUrl)}<br/>O link abre em qualquer dispositivo, sem necessidade de login.${comPdf ? " O PDF do relatório segue em anexo." : ""}</p>
+    <p style="margin-top:22px">Atenciosamente,<br/><strong>Abrahão Advogados</strong></p>
+  </div>`;
+}
+
 // ---------------------------------------------------------------------------
 // Clientes
 // ---------------------------------------------------------------------------
@@ -317,7 +365,10 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
   const reports = await prisma.report.findMany({
     where: { clientId: client.id },
     orderBy: { createdAt: "asc" },
-    include: { _count: { select: { attachments: true } } },
+    include: {
+      _count: { select: { attachments: true } },
+      emailSends: { orderBy: { sentAt: "desc" } },
+    },
   });
 
   const versoes = reports.map((r, i) => {
@@ -336,6 +387,7 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
       totalMovimentacoes: resumo.total,
       porTipo: resumo.porTipo,
       valorMovimentado: resumo.valor,
+      envios: r.emailSends.map((e) => ({ sentTo: e.sentTo, sentAt: e.sentAt, status: e.status })),
     };
   });
 
@@ -525,6 +577,71 @@ app.get("/api/public/reports/:token/pdf", async (req, res) => {
   const fileName = reportFileName(report.client.nome, report.mesReferencia, "pdf");
   const url = await getSignedUrl(report.pdfKey, undefined, fileName);
   res.json({ url });
+});
+
+// ---------------------------------------------------------------------------
+// Envio do relatório por e-mail ao contato do cliente (+ registro)
+// ---------------------------------------------------------------------------
+
+app.post("/api/reports/:id/send-email", requireAuth, async (req, res) => {
+  const report = await prisma.report.findUnique({ where: { id: req.params.id }, include: { client: true } });
+  if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
+  if (report.status !== "pronto") return res.status(400).json({ error: "Finalize o relatório antes de enviar ao cliente." });
+
+  // Destinatários: por contactIds (contatos do cliente) ou e-mails avulsos.
+  const { contactIds, to, baseUrl } = req.body ?? {};
+  let destinatarios = [];
+  if (Array.isArray(contactIds) && contactIds.length) {
+    const contatos = await prisma.contact.findMany({ where: { id: { in: contactIds }, clientId: report.clientId } });
+    destinatarios = contatos.map((c) => ({ nome: c.nome, email: c.email }));
+  } else if (Array.isArray(to) && to.length) {
+    destinatarios = to.filter((e) => typeof e === "string" && /.+@.+\..+/.test(e)).map((email) => ({ email }));
+  }
+  if (!destinatarios.length) return res.status(400).json({ error: "Selecione ao menos um contato/destinatário válido." });
+
+  // Garante um link seguro ativo (renova por 30 dias se não houver um válido).
+  let shareToken = report.shareToken;
+  if (!shareTokenValido(report)) {
+    shareToken = randomBytes(24).toString("base64url");
+    await prisma.report.update({
+      where: { id: report.id },
+      data: { shareToken, shareTokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+    });
+  }
+  const shareUrl = `${publicBaseUrl(req, baseUrl)}/r/${shareToken}`;
+  const assunto = emailAssunto(report);
+  const texto = emailTexto(report, shareUrl);
+  const emails = destinatarios.map((d) => d.email);
+
+  // Sem provedor configurado: registra como envio "manual" e devolve um mailto
+  // para o advogado enviar pelo próprio cliente de e-mail (com o link seguro).
+  if (!emailProvider()) {
+    await prisma.emailSend.createMany({ data: emails.map((e) => ({ reportId: report.id, sentTo: e, status: "manual" })) });
+    const mailto = `mailto:${encodeURIComponent(emails.join(","))}?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(texto)}`;
+    return res.json({ configured: false, mailto, to: emails, subject: assunto, shareUrl });
+  }
+
+  // Provedor configurado: envia pelo servidor com o PDF anexado.
+  let attachments = [];
+  if (report.pdfKey) {
+    const pdf = await downloadFile(report.pdfKey);
+    attachments = [{ filename: reportFileName(report.client.nome, report.mesReferencia, "pdf"), content: pdf }];
+  }
+  const html = emailHtml(report, shareUrl, attachments.length > 0);
+  const results = [];
+  for (const d of destinatarios) {
+    try {
+      await sendEmail({ to: d.email, subject: assunto, html, text: texto, attachments });
+      await prisma.emailSend.create({ data: { reportId: report.id, sentTo: d.email, status: "enviado" } });
+      results.push({ email: d.email, status: "enviado" });
+    } catch (err) {
+      const errorMessage = String(err?.message ?? err).slice(0, 500);
+      await prisma.emailSend.create({ data: { reportId: report.id, sentTo: d.email, status: "erro", errorMessage } });
+      results.push({ email: d.email, status: "erro", error: errorMessage });
+    }
+  }
+  const houveErro = results.some((r) => r.status === "erro");
+  res.status(houveErro ? 207 : 200).json({ configured: true, results, shareUrl });
 });
 
 // ---------------------------------------------------------------------------

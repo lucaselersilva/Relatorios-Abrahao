@@ -3,9 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, FilePlus2, Download, ChevronRight, CheckCircle2, Loader2,
   Building2, Layers, Paperclip, AlertTriangle, TrendingUp, Eye, Trash2,
-  Mail, Star, Plus, FileText,
+  Mail, Star, Plus, FileText, Send,
 } from "lucide-react";
 import { api } from "../lib/api.js";
+import EnviarEmailModal from "../components/EnviarEmailModal.jsx";
 
 const NAVY = "#142B4B";
 
@@ -46,6 +47,7 @@ export default function ClienteDetalhe() {
   const [novoContato, setNovoContato] = useState({ nome: "", email: "", principal: false });
   const [contatoErro, setContatoErro] = useState("");
   const [salvandoContato, setSalvandoContato] = useState(false);
+  const [enviarPara, setEnviarPara] = useState(null);
 
   useEffect(() => {
     api
@@ -60,6 +62,12 @@ export default function ClienteDetalhe() {
 
   const reloadContacts = async () => {
     const d = await api.getClient(id);
+    setContacts(d.contacts ?? []);
+  };
+
+  const reloadData = async () => {
+    const d = await api.getClient(id);
+    setData(d);
     setContacts(d.contacts ?? []);
   };
 
@@ -431,6 +439,11 @@ export default function ClienteDetalhe() {
                   )}
                   <span>{new Date(v.finalizedAt ?? v.createdAt).toLocaleDateString("pt-BR")}</span>
                   <span>· {v.autor}</span>
+                  {v.envios?.length > 0 && (
+                    <span className="flex items-center gap-1" style={{ color: v.envios.some((e) => e.status === "erro") ? "#A33B3B" : "#2F5D45" }}>
+                      <Mail size={11} /> {v.envios.length} envio(s){v.envios.some((e) => e.status === "erro") ? " (com erro)" : ""}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3 shrink-0">
@@ -440,6 +453,14 @@ export default function ClienteDetalhe() {
                 >
                   <Eye size={13} /> Visualizar
                 </button>
+                {v.status === "pronto" && (
+                  <button
+                    onClick={() => setEnviarPara(v.id)}
+                    className="flex items-center gap-1 text-[12px] text-[#2F5D45] font-medium hover:underline"
+                  >
+                    <Send size={13} /> Enviar
+                  </button>
+                )}
                 {v.docxDisponivel ? (
                   <>
                     <button
@@ -484,6 +505,15 @@ export default function ClienteDetalhe() {
         <div className="mt-4 flex items-center gap-2 text-[12px] text-[#A33B3B]">
           <AlertTriangle size={13} /> {erro}
         </div>
+      )}
+
+      {enviarPara && (
+        <EnviarEmailModal
+          reportId={enviarPara}
+          contacts={contacts}
+          onClose={() => setEnviarPara(null)}
+          onSent={reloadData}
+        />
       )}
     </div>
   );

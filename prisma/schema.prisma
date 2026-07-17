@@ -100,6 +100,22 @@ model Report {
   finalizedAt    DateTime?
 
   attachments Attachment[]
+  emailSends  EmailSend[]
+}
+
+// Registro de cada envio do relatório por e-mail (auditoria + linha do tempo).
+// status: "enviado" (provedor confirmou) | "erro" | "manual" (preparado para
+// envio pelo próprio cliente de e-mail do advogado, via mailto).
+model EmailSend {
+  id           String   @id @default(cuid())
+  report       Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId     String
+  sentTo       String
+  sentAt       DateTime @default(now())
+  status       String
+  errorMessage String?
+
+  @@index([reportId])
 }
 
 model Attachment {

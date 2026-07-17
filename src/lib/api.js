@@ -81,6 +81,12 @@ export const api = {
     request(`/api/reports/${reportId}/share-link`, { method: "POST", body: JSON.stringify(dias ? { dias } : {}) }),
   revokeShareLink: (reportId) => request(`/api/reports/${reportId}/share-link`, { method: "DELETE" }),
 
+  sendReportEmail: (reportId, { contactIds, to } = {}) =>
+    request(`/api/reports/${reportId}/send-email`, {
+      method: "POST",
+      body: JSON.stringify({ contactIds, to, baseUrl: window.location.origin }),
+    }),
+
   // Rotas públicas (sem login) — usadas pela página /r/:token.
   getPublicReport: (token) => request(`/api/public/reports/${token}`),
   getPublicPdfUrl: async (token) => (await request(`/api/public/reports/${token}/pdf`)).url,
