@@ -180,12 +180,20 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
     };
   });
 
-  // KPIs atuais = do upload mais recente do cliente.
-  const ultimoUpload = await prisma.upload.findFirst({
-    where: { clientId: client.id },
-    orderBy: { uploadedAt: "desc" },
-    include: { processos: true },
-  });
+  // KPIs atuais = do período mais recente do cliente (não o último upload por
+  // data — assim um mês antigo enviado por backfill não vira "situação atual").
+  // Registros legados sem período caem no comportamento por data de upload.
+  const ultimoUpload =
+    (await prisma.upload.findFirst({
+      where: { clientId: client.id, periodo: { not: null } },
+      orderBy: { periodo: "desc" },
+      include: { processos: true },
+    })) ??
+    (await prisma.upload.findFirst({
+      where: { clientId: client.id },
+      orderBy: { uploadedAt: "desc" },
+      include: { processos: true },
+    }));
   const kpisAtuais = ultimoUpload ? computeKpis(ultimoUpload.processos) : null;
 
   res.json({
