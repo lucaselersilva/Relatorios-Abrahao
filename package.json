@@ -14,7 +14,9 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "node prisma/seed.js",
-    "exemplos": "node scripts/gerar-exemplos.mjs"
+    "exemplos": "node scripts/gerar-exemplos.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
@@ -38,9 +40,11 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "concurrently": "^10.0.3",
+    "jszip": "^3.10.1",
     "postcss": "^8.4.49",
     "prisma": "^7.8.0",
     "tailwindcss": "^3.4.15",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
   }
 }
