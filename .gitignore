@@ -5,4 +5,8 @@ dist
 .env
 .gstack/
 
+# Arquivos de clientes (planilhas/.docx/.pdf) nunca devem ser versionados —
+# ficam no Supabase Storage. A pasta local é só resquício do storage antigo.
+uploads/
+
 /src/generated/prisma
