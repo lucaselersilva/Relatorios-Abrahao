@@ -6,6 +6,7 @@ import { requireAuth } from "../lib/auth.js";
 import { uploadFile, getSignedUrl } from "../lib/storage.js";
 import { parseSpreadsheet } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
+import { isPeriodoValido, periodoParaRotulo } from "../lib/periodo.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 
@@ -45,16 +46,38 @@ function resumirMovimentacoes(relatorios) {
  * finalização (.docx) quanto na visualização em tela do relatório — as duas
  * telas mostram exatamente os mesmos números. `report` precisa incluir `upload`.
  */
+/**
+ * O upload do período imediatamente anterior deste cliente. Compara pelo
+ * `periodo` real ("YYYY-MM"), não pela data de criação — assim um mês enviado
+ * fora de ordem (backfill) ainda compara contra o mês certo. Registros antigos
+ * sem `periodo` (backfill que não deu para parsear) caem no comportamento
+ * legado por data de upload.
+ */
+async function findUploadAnterior(clientId, periodoAtual, uploadedAtAtual) {
+  if (periodoAtual) {
+    return prisma.upload.findFirst({
+      where: { clientId, periodo: { lt: periodoAtual } },
+      orderBy: { periodo: "desc" },
+      include: { processos: true },
+    });
+  }
+  return prisma.upload.findFirst({
+    where: { clientId, uploadedAt: { lt: uploadedAtAtual } },
+    orderBy: { uploadedAt: "desc" },
+    include: { processos: true },
+  });
+}
+
 async function computeReportInsights(report) {
   const processosAtuais = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
   const kpis = computeKpis(processosAtuais);
   const panorama = computePanorama(processosAtuais);
 
-  const uploadAnterior = await prisma.upload.findFirst({
-    where: { clientId: report.clientId, uploadedAt: { lt: report.upload.uploadedAt } },
-    orderBy: { uploadedAt: "desc" },
-    include: { processos: true },
-  });
+  const uploadAnterior = await findUploadAnterior(
+    report.clientId,
+    report.periodo ?? report.upload.periodo,
+    report.upload.uploadedAt
+  );
   const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
 
   return { kpis, kpisAnterior, panorama };
@@ -207,16 +230,21 @@ app.get("/api/reports/:id", requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, res) => {
-  const { clientId, mesReferencia } = req.body ?? {};
-  if (!clientId || !mesReferencia) return res.status(400).json({ error: "clientId e mesReferencia são obrigatórios" });
+  const { clientId, periodo } = req.body ?? {};
+  if (!clientId || !periodo) return res.status(400).json({ error: "clientId e periodo são obrigatórios" });
+  if (!isPeriodoValido(periodo)) return res.status(400).json({ error: 'periodo deve estar no formato "YYYY-MM".' });
   if (!req.file) return res.status(400).json({ error: "Arquivo da planilha é obrigatório" });
 
+  // mesReferencia é só rótulo — deriva do período se o cliente não mandou um.
+  const mesReferencia = req.body.mesReferencia?.trim() || periodoParaRotulo(periodo);
+
   const duplicado = await prisma.upload.findUnique({
-    where: { clientId_mesReferencia: { clientId, mesReferencia } },
+    where: { clientId_periodo: { clientId, periodo } },
   });
   if (duplicado) {
     return res.status(409).json({
-      error: `Já existe uma planilha enviada para este cliente em "${mesReferencia}". Use outro mês de referência para gerar uma nova versão.`,
+      error: `Já existe uma planilha enviada para este cliente em ${mesReferencia}.`,
+      periodo,
     });
   }
 
@@ -229,15 +257,12 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
 
   const { key: fileKey } = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
 
-  const uploadAnterior = await prisma.upload.findFirst({
-    where: { clientId, mesReferencia: { not: mesReferencia } },
-    orderBy: { uploadedAt: "desc" },
-    include: { processos: true },
-  });
+  const uploadAnterior = await findUploadAnterior(clientId, periodo, new Date());
 
   const uploadAtual = await prisma.upload.create({
     data: {
       clientId,
+      periodo,
       mesReferencia,
       fileName: req.file.originalname,
       fileKey,
@@ -255,6 +280,7 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
     data: {
       clientId,
       uploadId: uploadAtual.id,
+      periodo,
       mesReferencia,
       status: "rascunho",
       movimentacoes,

@@ -26,6 +26,9 @@ model Upload {
   id             String   @id @default(cuid())
   client         Client   @relation(fields: [clientId], references: [id])
   clientId       String
+  // periodo é o mês real da carteira em formato "YYYY-MM" — a fonte da verdade
+  // para ordenar/comparar meses. mesReferencia é só o rótulo de exibição.
+  periodo        String?
   mesReferencia  String
   fileName       String
   fileKey        String
@@ -36,7 +39,7 @@ model Upload {
   processos Processo[]
   reports   Report[]
 
-  @@unique([clientId, mesReferencia])
+  @@unique([clientId, periodo])
 }
 
 model Processo {
@@ -60,6 +63,7 @@ model Report {
   clientId       String
   upload         Upload    @relation(fields: [uploadId], references: [id])
   uploadId       String
+  periodo        String?   // "YYYY-MM" — espelha o periodo do Upload de origem
   mesReferencia  String
   status         String    @default("rascunho") // rascunho | pronto
   movimentacoes  Json?

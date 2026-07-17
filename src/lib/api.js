@@ -26,9 +26,10 @@ export const api = {
   listReports: () => request("/api/reports"),
   getReport: (id) => request(`/api/reports/${id}`),
 
-  uploadSpreadsheet: (clientId, mesReferencia, file) => {
+  uploadSpreadsheet: (clientId, periodo, mesReferencia, file) => {
     const form = new FormData();
     form.append("clientId", clientId);
+    form.append("periodo", periodo);
     form.append("mesReferencia", mesReferencia);
     form.append("file", file);
     return request("/api/reports/upload", { method: "POST", body: form });

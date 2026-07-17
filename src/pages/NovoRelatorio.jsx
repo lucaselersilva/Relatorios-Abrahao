@@ -8,6 +8,20 @@ import { api } from "../lib/api.js";
 
 const NAVY = "#142B4B";
 
+const MESES = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+];
+
+// "2026-06" -> "Junho/2026" (rótulo de exibição). O período em si ("YYYY-MM")
+// é o que o backend usa para ordenar/comparar meses.
+function periodoParaRotulo(periodo) {
+  if (!/^\d{4}-\d{2}$/.test(periodo || "")) return periodo || "";
+  const [ano, mes] = periodo.split("-");
+  const idx = Number(mes) - 1;
+  return idx >= 0 && idx < 12 ? `${MESES[idx]}/${ano}` : periodo;
+}
+
 const STEPS = [
   { id: 0, label: "Cliente" },
   { id: 1, label: "Upload" },
@@ -60,7 +74,8 @@ export default function NovoRelatorio() {
   const [clientId, setClientId] = useState(preClientId || "");
   const [versao, setVersao] = useState(null);
   const [novoClienteNome, setNovoClienteNome] = useState("");
-  const [mesReferencia, setMesReferencia] = useState("");
+  const [periodo, setPeriodo] = useState(""); // "YYYY-MM"
+  const [mesReferencia, setMesReferencia] = useState(""); // rótulo de exibição
   const [clienteNomeExibicao, setClienteNomeExibicao] = useState("");
 
   const [uploading, setUploading] = useState(false);
@@ -86,6 +101,7 @@ export default function NovoRelatorio() {
       .getReport(resumeId)
       .then((r) => {
         setClienteNomeExibicao(r.client.nome);
+        setPeriodo(r.periodo ?? "");
         setMesReferencia(r.mesReferencia);
         setKpis(r.kpis);
         setVersao(r.versao ?? null);
@@ -128,7 +144,9 @@ export default function NovoRelatorio() {
       }
 
       setUploading(true);
-      const result = await api.uploadSpreadsheet(finalClientId, mesReferencia, file);
+      const rotulo = periodoParaRotulo(periodo);
+      setMesReferencia(rotulo);
+      const result = await api.uploadSpreadsheet(finalClientId, periodo, rotulo, file);
       setReportId(result.reportId);
       setKpis(result.kpis);
       setVersao(result.versao ?? null);
@@ -291,14 +309,17 @@ export default function NovoRelatorio() {
 
             <label className="block text-[12px] font-medium text-[#44546A] mb-1">Mês de referência</label>
             <input
-              value={mesReferencia}
-              onChange={(e) => setMesReferencia(e.target.value)}
-              className="w-full mb-6 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38]"
-              placeholder="Ex: Junho/2026"
+              type="month"
+              value={periodo}
+              onChange={(e) => setPeriodo(e.target.value)}
+              className="w-full mb-1.5 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38] bg-white"
             />
+            <p className="text-[11px] text-[#9AA2AF] mb-6">
+              {periodo ? `Aparecerá no relatório como “${periodoParaRotulo(periodo)}”.` : "Escolha o mês da carteira que esta planilha representa."}
+            </p>
 
             <button
-              disabled={!clientId || !mesReferencia || (clientId === "__new__" && !novoClienteNome.trim())}
+              disabled={!clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())}
               onClick={() => setStep(1)}
               className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-40"
             >
