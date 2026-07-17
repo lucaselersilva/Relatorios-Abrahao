@@ -1,5 +1,8 @@
+import path from "node:path";
+
 import express from "express";
 import multer from "multer";
+import { z } from "zod";
 
 import { Prisma } from "@prisma/client";
 
@@ -13,6 +16,19 @@ import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+// Anexos: só documentos de apoio jurídico fazem sentido aqui. Restringimos por
+// extensão (o mimetype do navegador é pouco confiável para .docx).
+const EXTENSOES_ANEXO_PERMITIDAS = new Set([".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx"]);
+const MENSAGEM_ANEXO_INVALIDO = "Tipo de arquivo não suportado. Envie PDF, imagem (PNG/JPG/WEBP) ou documento Word (.doc/.docx).";
+
+// Schemas de validação das rotas de escrita.
+const clientSchema = z.object({ nome: z.string().trim().min(1, "Nome do cliente é obrigatório") });
+const narrativaSchema = z.object({ titulo: z.string(), texto: z.string(), fonte: z.string() });
+const patchReportSchema = z.object({
+  narrativas: z.array(narrativaSchema).optional(),
+  selecionados: z.array(z.string()).optional(),
+});
 
 export const app = express();
 app.use(express.json());
@@ -125,9 +141,9 @@ app.get("/api/clients", requireAuth, async (req, res) => {
 });
 
 app.post("/api/clients", requireAuth, async (req, res) => {
-  const { nome } = req.body ?? {};
-  if (!nome?.trim()) return res.status(400).json({ error: "Nome do cliente é obrigatório" });
-  const client = await prisma.client.create({ data: { nome: nome.trim() } });
+  const parsed = clientSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Payload inválido" });
+  const client = await prisma.client.create({ data: { nome: parsed.data.nome } });
   res.status(201).json(client);
 });
 
@@ -406,6 +422,11 @@ app.post("/api/reports/:id/attachments", requireAuth, upload.single("file"), asy
   if (!processoNumero) return res.status(400).json({ error: "processoNumero é obrigatório" });
   if (!req.file) return res.status(400).json({ error: "Arquivo é obrigatório" });
 
+  const ext = path.extname(req.file.originalname || "").toLowerCase();
+  if (!EXTENSOES_ANEXO_PERMITIDAS.has(ext)) {
+    return res.status(400).json({ error: MENSAGEM_ANEXO_INVALIDO });
+  }
+
   const { key: fileKey } = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
   const extractedText = req.file.mimetype === "application/pdf" ? await extractPdfText(req.file.buffer) : null;
 
@@ -423,7 +444,13 @@ app.post("/api/reports/:id/attachments", requireAuth, upload.single("file"), asy
 });
 
 app.delete("/api/reports/:id/attachments/:attachmentId", requireAuth, async (req, res) => {
-  await prisma.attachment.delete({ where: { id: req.params.attachmentId } });
+  // Confere que o anexo pertence mesmo ao report da URL antes de apagar.
+  const attachment = await prisma.attachment.findUnique({ where: { id: req.params.attachmentId } });
+  if (!attachment || attachment.reportId !== req.params.id) {
+    return res.status(404).json({ error: "Anexo não encontrado neste relatório" });
+  }
+  await prisma.attachment.delete({ where: { id: attachment.id } });
+  await removeFiles([attachment.fileKey]);
   res.json({ ok: true });
 });
 
@@ -459,7 +486,9 @@ app.post("/api/reports/:id/analyze", requireAuth, async (req, res) => {
 });
 
 app.patch("/api/reports/:id", requireAuth, async (req, res) => {
-  const { narrativas, selecionados } = req.body ?? {};
+  const parsed = patchReportSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Payload inválido", detalhes: parsed.error.issues });
+  const { narrativas, selecionados } = parsed.data;
   const report = await prisma.report.update({
     where: { id: req.params.id },
     data: {

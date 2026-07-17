@@ -548,6 +548,7 @@ export default function NovoRelatorio() {
                         <input
                           type="file"
                           className="hidden"
+                          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
                           onChange={(e) => handleAttachFile(m.numero, e.target.files?.[0])}
                         />
                       </label>
