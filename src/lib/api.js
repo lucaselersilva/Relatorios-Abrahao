@@ -25,22 +25,25 @@ export const api = {
   listClients: () => request("/api/clients"),
   getClient: (id) => request(`/api/clients/${id}`),
   createClient: (nome) => request("/api/clients", { method: "POST", body: JSON.stringify({ nome }) }),
+  updateClient: (id, data) => request(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   listReports: () => request("/api/reports"),
   getReport: (id) => request(`/api/reports/${id}`),
 
-  uploadSpreadsheet: (clientId, periodo, mesReferencia, file) => {
+  uploadSpreadsheet: (clientId, periodo, mesReferencia, file, mapping) => {
     const form = new FormData();
     form.append("clientId", clientId);
     form.append("periodo", periodo);
     form.append("mesReferencia", mesReferencia);
     form.append("file", file);
+    if (mapping && Object.keys(mapping).length) form.append("mapping", JSON.stringify(mapping));
     return request("/api/reports/upload", { method: "POST", body: form });
   },
 
-  replaceSpreadsheet: (reportId, file) => {
+  replaceSpreadsheet: (reportId, file, mapping) => {
     const form = new FormData();
     form.append("file", file);
+    if (mapping && Object.keys(mapping).length) form.append("mapping", JSON.stringify(mapping));
     return request(`/api/reports/${reportId}/spreadsheet`, { method: "PUT", body: form });
   },
 

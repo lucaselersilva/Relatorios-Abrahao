@@ -9,7 +9,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { requireAuth } from "../lib/auth.js";
 import { uploadFile, getSignedUrl, removeFiles } from "../lib/storage.js";
-import { parseSpreadsheet } from "../lib/xlsx-parser.js";
+import { parseSpreadsheet, normalizeMapping, CAMPOS_SISTEMA } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
 import { isPeriodoValido, periodoParaRotulo } from "../lib/periodo.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
@@ -24,6 +24,11 @@ const MENSAGEM_ANEXO_INVALIDO = "Tipo de arquivo não suportado. Envie PDF, imag
 
 // Schemas de validação das rotas de escrita.
 const clientSchema = z.object({ nome: z.string().trim().min(1, "Nome do cliente é obrigatório") });
+// Mapeamento manual de colunas: objeto { campo: nomeColuna } com campos válidos.
+const columnMappingSchema = z.record(z.enum(CAMPOS_SISTEMA), z.string()).nullable();
+const patchClientSchema = z
+  .object({ nome: z.string().trim().min(1).optional(), columnMapping: columnMappingSchema.optional() })
+  .refine((v) => v.nome !== undefined || v.columnMapping !== undefined, "Nada para atualizar");
 const narrativaSchema = z.object({ titulo: z.string(), texto: z.string(), fonte: z.string() });
 const patchReportSchema = z.object({
   narrativas: z.array(narrativaSchema).optional(),
@@ -32,6 +37,20 @@ const patchReportSchema = z.object({
 
 export const app = express();
 app.use(express.json());
+
+/**
+ * Lê o campo `mapping` de um upload multipart (chega como string JSON) e devolve
+ * um objeto { campo: nomeColuna } normalizado. Entrada inválida vira {}.
+ */
+function parseMappingBody(raw) {
+  if (!raw) return {};
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return normalizeMapping(obj);
+  } catch {
+    return {};
+  }
+}
 
 async function extractPdfText(buffer) {
   try {
@@ -145,6 +164,25 @@ app.post("/api/clients", requireAuth, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Payload inválido" });
   const client = await prisma.client.create({ data: { nome: parsed.data.nome } });
   res.status(201).json(client);
+});
+
+// Atualiza o cliente — hoje usado para salvar/limpar o mapeamento manual de
+// colunas (columnMapping) e, opcionalmente, renomear.
+app.patch("/api/clients/:id", requireAuth, async (req, res) => {
+  const parsed = patchClientSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Payload inválido" });
+  const data = {};
+  if (parsed.data.nome !== undefined) data.nome = parsed.data.nome;
+  if (parsed.data.columnMapping !== undefined) {
+    // null limpa o mapeamento; objeto é normalizado antes de guardar.
+    data.columnMapping = parsed.data.columnMapping === null ? Prisma.DbNull : normalizeMapping(parsed.data.columnMapping);
+  }
+  try {
+    const client = await prisma.client.update({ where: { id: req.params.id }, data });
+    res.json(client);
+  } catch {
+    res.status(404).json({ error: "Cliente não encontrado" });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -281,11 +319,19 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
     });
   }
 
+  // Mapeamento de colunas: o salvo no cliente é reaplicado automaticamente e o
+  // que veio na requisição (mapeamento manual desta vez) tem prioridade.
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  const mappingRequest = parseMappingBody(req.body.mapping);
+  const mappingFinal = normalizeMapping({ ...(client?.columnMapping ?? {}), ...mappingRequest });
+
   let processosAtuais;
+  let leitura;
   try {
-    processosAtuais = await parseSpreadsheet(req.file.buffer);
+    ({ processos: processosAtuais, leitura } = await parseSpreadsheet(req.file.buffer, { mapping: mappingFinal }));
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    // Devolve as colunas lidas (err.leitura) para a UI oferecer o mapeador manual.
+    return res.status(400).json({ error: err.message, leitura: err.leitura ?? null });
   }
 
   const { key: fileKey } = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
@@ -322,10 +368,16 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
     },
   });
 
+  // Mapeou colunas manualmente? Guarda no cliente para os próximos meses já
+  // virem certos sem o usuário precisar mapear de novo.
+  if (Object.keys(mappingRequest).length > 0) {
+    await prisma.client.update({ where: { id: clientId }, data: { columnMapping: mappingFinal } });
+  }
+
   // Número da versão deste relatório na linha do tempo do cliente.
   const versao = await prisma.report.count({ where: { clientId } });
 
-  res.status(201).json({ reportId: report.id, versao, kpis, movimentacoes });
+  res.status(201).json({ reportId: report.id, versao, kpis, movimentacoes, leitura });
 });
 
 // ---------------------------------------------------------------------------
@@ -339,15 +391,19 @@ app.put("/api/reports/:id/spreadsheet", requireAuth, upload.single("file"), asyn
 
   const report = await prisma.report.findUnique({
     where: { id: req.params.id },
-    include: { upload: true },
+    include: { upload: true, client: true },
   });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
+  const mappingRequest = parseMappingBody(req.body.mapping);
+  const mappingFinal = normalizeMapping({ ...(report.client.columnMapping ?? {}), ...mappingRequest });
+
   let processosNovos;
+  let leitura;
   try {
-    processosNovos = await parseSpreadsheet(req.file.buffer);
+    ({ processos: processosNovos, leitura } = await parseSpreadsheet(req.file.buffer, { mapping: mappingFinal }));
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message, leitura: err.leitura ?? null });
   }
 
   const { key: novoFileKey } = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
@@ -380,8 +436,12 @@ app.put("/api/reports/:id/spreadsheet", requireAuth, upload.single("file"), asyn
     },
   });
 
+  if (Object.keys(mappingRequest).length > 0) {
+    await prisma.client.update({ where: { id: report.clientId }, data: { columnMapping: mappingFinal } });
+  }
+
   await removeFiles(chavesAntigas);
-  res.json({ reportId: report.id, kpis, movimentacoes });
+  res.json({ reportId: report.id, kpis, movimentacoes, leitura });
 });
 
 // ---------------------------------------------------------------------------

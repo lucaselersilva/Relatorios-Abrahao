@@ -17,6 +17,10 @@ model Client {
   id        String   @id @default(cuid())
   nome      String
   createdAt DateTime @default(now())
+  // Mapeamento manual de colunas da planilha -> campo do sistema, quando o nome
+  // da coluna foge do padrão (ex.: { "valor": "valor da demanda" }). Guardamos o
+  // mais recente por cliente e reaplicamos nos uploads seguintes.
+  columnMapping Json?
 
   uploads Upload[]
   reports Report[]

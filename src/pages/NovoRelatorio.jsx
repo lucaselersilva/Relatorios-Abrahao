@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Upload, CheckCircle2, ArrowRight, Sparkles, FileText, Paperclip, X, Download,
   AlertTriangle, ChevronRight, Scale, Building2, Gavel, Loader2, History, Eye,
+  RefreshCw, Table2,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 
@@ -13,6 +14,17 @@ const MESES = [
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
 
+// Rótulos dos campos do sistema (espelham lib/xlsx-parser.js CAMPO_LABELS).
+const CAMPO_LABELS = {
+  numero: "Número do processo",
+  parte: "Parte",
+  area: "Área",
+  valor: "Valor envolvido",
+  provisao: "Provisão",
+  status: "Status",
+  probabilidade: "Probabilidade",
+};
+
 // "2026-06" -> "Junho/2026" (rótulo de exibição). O período em si ("YYYY-MM")
 // é o que o backend usa para ordenar/comparar meses.
 function periodoParaRotulo(periodo) {
@@ -22,13 +34,21 @@ function periodoParaRotulo(periodo) {
   return idx >= 0 && idx < 12 ? `${MESES[idx]}/${ano}` : periodo;
 }
 
+function fmtMoeda(n) {
+  if (n == null) return "—";
+  return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Cliente + Upload viram uma única etapa ("Planilha"); a conferência da leitura
+// é uma sub-etapa dela, então o wizard tem 5 passos.
 const STEPS = [
-  { id: 0, label: "Cliente" },
-  { id: 1, label: "Upload" },
-  { id: 2, label: "O que mudou" },
-  { id: 3, label: "Documentos" },
-  { id: 4, label: "Análise da IA" },
-  { id: 5, label: "Relatório" },
+  { id: 0, label: "Planilha" },
+  { id: 1, label: "O que mudou" },
+  { id: 2, label: "Documentos" },
+  { id: 3, label: "Análise da IA" },
+  { id: 4, label: "Relatório" },
 ];
 
 function Badge({ tipo }) {
@@ -61,6 +81,142 @@ function AreaIcon({ area }) {
   return <Scale size={15} className="text-[#44546A]" />;
 }
 
+/**
+ * Polling da análise assíncrona: o backend responde na hora marcando o report
+ * como "analisando" e roda a IA fora do request. Aqui consultamos o report até
+ * o status sair de "analisando" (narrativas prontas) ou virar "erro".
+ */
+async function aguardarAnalise(reportId, { intervalMs = 2500, timeoutMs = 15 * 60 * 1000 } = {}) {
+  const inicio = Date.now();
+  while (Date.now() - inicio < timeoutMs) {
+    const r = await api.getReport(reportId);
+    if (r.status === "erro") throw new Error("A análise da IA falhou. Tente rodar novamente.");
+    if (r.status !== "analisando") return r.narrativas ?? [];
+    await sleep(intervalMs);
+  }
+  throw new Error("A análise está demorando mais que o esperado. Recarregue a página e verifique o relatório.");
+}
+
+// Sub-etapa "Confira a leitura": mostra o que o parser entendeu da planilha e,
+// quando falta reconhecer uma coluna, oferece o mapeador manual.
+function ConfiraLeitura({ leitura, mapping, setMapping }) {
+  const colunasIgnoradas = leitura.colunas.filter((c) => !c.campo);
+  const camposMapeaveis = leitura.camposFaltando; // inclui numero quando a leitura falhou
+  const podeMapear = colunasIgnoradas.length > 0 && camposMapeaveis.length > 0;
+
+  const setCampo = (campo, nome) =>
+    setMapping((m) => {
+      const next = { ...m };
+      if (nome) next[campo] = nome;
+      else delete next[campo];
+      return next;
+    });
+
+  return (
+    <div className="bg-white border border-[#E2E5EA] rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-[#EEF0F3]">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-[#142B4B]">
+          <Table2 size={15} /> Confira a leitura
+        </div>
+        <div className="text-[11px] text-[#9AA2AF] mt-0.5">
+          {leitura.headerRow ? `Cabeçalho reconhecido na linha ${leitura.headerRow}.` : "Cabeçalho não reconhecido."} Revise antes de continuar.
+        </div>
+      </div>
+
+      <div className="px-5 py-4 flex flex-col gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-[#9AA2AF] mb-1.5">Colunas reconhecidas</div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(leitura.camposReconhecidos).map(([campo, nome]) => (
+              <span key={campo} className="inline-flex items-center gap-1 text-[11px] bg-[#E4EDE7] text-[#2F5D45] px-2 py-1 rounded-md">
+                <CheckCircle2 size={11} /> {CAMPO_LABELS[campo] ?? campo}: <b className="font-semibold">{nome}</b>
+              </span>
+            ))}
+            {Object.keys(leitura.camposReconhecidos).length === 0 && (
+              <span className="text-[11px] text-[#9AA2AF]">Nenhuma coluna reconhecida.</span>
+            )}
+          </div>
+        </div>
+
+        {colunasIgnoradas.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#9AA2AF] mb-1.5">Colunas ignoradas</div>
+            <div className="flex flex-wrap gap-1.5">
+              {colunasIgnoradas.map((c) => (
+                <span key={c.index} className="inline-flex items-center gap-1 text-[11px] bg-[#EEF0F3] text-[#44546A] px-2 py-1 rounded-md">
+                  {c.nome || `Coluna ${c.index}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {podeMapear && (
+        <div className="px-5 py-4 border-t border-[#EEF0F3] bg-[#FBF8F2]">
+          <div className="flex items-start gap-2 text-[12px] text-[#8A6D1F] mb-3">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div>
+              Alguns campos não foram reconhecidos automaticamente. Se alguma coluna ignorada corresponder a um deles,
+              associe abaixo e reprocesse — o mapeamento fica salvo para os próximos meses deste cliente.
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            {camposMapeaveis.map((campo) => (
+              <div key={campo} className="flex items-center gap-2">
+                <label className="text-[12px] text-[#44546A] w-40 shrink-0">{CAMPO_LABELS[campo] ?? campo}</label>
+                <ChevronRight size={12} className="text-[#C7CCD4] shrink-0" />
+                <select
+                  value={mapping[campo] ?? ""}
+                  onChange={(e) => setCampo(campo, e.target.value)}
+                  className="flex-1 text-[12px] border border-[#D9DCE1] rounded-md px-2 py-1.5 outline-none focus:border-[#9C7C38] bg-white"
+                >
+                  <option value="">— coluna da planilha —</option>
+                  {colunasIgnoradas.map((c) => (
+                    <option key={c.index} value={c.nome}>{c.nome || `Coluna ${c.index}`}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {leitura.amostra.length > 0 && (
+        <div className="px-5 py-4 border-t border-[#EEF0F3]">
+          <div className="text-[10px] uppercase tracking-wide text-[#9AA2AF] mb-2">Amostra das primeiras linhas lidas</div>
+          <div className="overflow-x-auto">
+            <table className="text-left text-[11.5px] min-w-full">
+              <thead>
+                <tr className="text-[#9AA2AF] border-b border-[#EEF0F3]">
+                  <th className="py-1.5 pr-3 font-medium">Número</th>
+                  <th className="py-1.5 pr-3 font-medium">Parte</th>
+                  <th className="py-1.5 pr-3 font-medium">Área</th>
+                  <th className="py-1.5 pr-3 font-medium">Valor</th>
+                  <th className="py-1.5 pr-3 font-medium">Provisão</th>
+                  <th className="py-1.5 pr-3 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leitura.amostra.map((p, i) => (
+                  <tr key={i} className="border-b border-[#F5F6F8] text-[#44546A]">
+                    <td className="py-1.5 pr-3 font-mono text-[10.5px] whitespace-nowrap">{p.numero}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{p.parte ?? "—"}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{p.area ?? "—"}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{fmtMoeda(p.valor)}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{fmtMoeda(p.provisao)}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{p.status ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function NovoRelatorio() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -78,13 +234,15 @@ export default function NovoRelatorio() {
   const [mesReferencia, setMesReferencia] = useState(""); // rótulo de exibição
   const [clienteNomeExibicao, setClienteNomeExibicao] = useState("");
 
+  const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [duplicado, setDuplicado] = useState(null); // { reportId, file } quando o período já existe
-  const [substituindo, setSubstituindo] = useState(false);
   const [reportId, setReportId] = useState(resumeId || null);
   const [kpis, setKpis] = useState(null);
   const [movimentacoes, setMovimentacoes] = useState([]);
   const [selected, setSelected] = useState({});
+  const [leitura, setLeitura] = useState(null); // conferência da leitura da planilha
+  const [mapping, setMapping] = useState({}); // mapeamento manual { campo: nomeColuna }
 
   const [attachments, setAttachments] = useState({}); // numero -> [{id, fileName}]
   const [analyzing, setAnalyzing] = useState(false);
@@ -116,7 +274,7 @@ export default function NovoRelatorio() {
         // Mantém marcadas as relevantes + qualquer uma que já tenha documento anexado.
         setSelected({ ...selecaoRelevante(r.movimentacoes ?? []), ...Object.fromEntries(Object.keys(attByNumero).map((n) => [n, true])) });
         if (r.narrativas) setNarrativas(r.narrativas);
-        setStep(2);
+        setStep(1); // vai direto para "O que mudou"
       })
       .catch((err) => setErro(err.message))
       .finally(() => setLoadingResume(false));
@@ -124,15 +282,25 @@ export default function NovoRelatorio() {
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
 
-  const handleUploadClick = async (e) => {
-    const file = e.target.files?.[0];
+  // Envia a planilha: cria o relatório (POST) ou, se já existe, reprocessa a
+  // planilha do período (PUT) aplicando o mapeamento manual atual.
+  const enviar = async (file = selectedFile, mappingArg = mapping) => {
     if (!file) return;
-
-    let finalClientId = clientId;
     setErro("");
     setDuplicado(null);
-
+    setUploading(true);
     try {
+      if (reportId) {
+        // Reprocessar: mesma planilha, mapeamento revisado.
+        const result = await api.replaceSpreadsheet(reportId, file, mappingArg);
+        setKpis(result.kpis);
+        setMovimentacoes(result.movimentacoes);
+        setSelected(selecaoRelevante(result.movimentacoes));
+        setLeitura(result.leitura);
+        return;
+      }
+
+      let finalClientId = clientId;
       if (clientId === "__new__") {
         if (!novoClienteNome.trim()) {
           setErro("Informe o nome do novo cliente.");
@@ -140,26 +308,30 @@ export default function NovoRelatorio() {
         }
         const created = await api.createClient(novoClienteNome.trim());
         finalClientId = created.id;
+        setClientId(created.id);
         setClienteNomeExibicao(created.nome);
       } else {
         const c = clients.find((c) => c.id === clientId);
         setClienteNomeExibicao(c?.nome ?? "");
       }
 
-      setUploading(true);
       const rotulo = periodoParaRotulo(periodo);
       setMesReferencia(rotulo);
-      const result = await api.uploadSpreadsheet(finalClientId, periodo, rotulo, file);
+      const result = await api.uploadSpreadsheet(finalClientId, periodo, rotulo, file, mappingArg);
       setReportId(result.reportId);
       setKpis(result.kpis);
       setVersao(result.versao ?? null);
       setMovimentacoes(result.movimentacoes);
       setSelected(selecaoRelevante(result.movimentacoes));
-      setStep(2);
+      setLeitura(result.leitura);
     } catch (err) {
       // Mês duplicado: oferece substituir a planilha ou abrir o relatório existente.
       if (err.status === 409 && err.body?.reportId) {
         setDuplicado({ reportId: err.body.reportId, file });
+      } else if (err.body?.leitura) {
+        // Parse falhou mas o backend devolveu as colunas lidas: mostra o mapeador.
+        setLeitura(err.body.leitura);
+        setErro(err.message || "Não foi possível ler a planilha automaticamente. Mapeie as colunas abaixo.");
       } else {
         setErro(err.message || "Erro ao processar a planilha");
       }
@@ -168,22 +340,32 @@ export default function NovoRelatorio() {
     }
   };
 
+  const onSelectFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedFile(file);
+    setLeitura(null);
+    setMapping({});
+    enviar(file, {});
+  };
+
   const substituirPlanilha = async () => {
     if (!duplicado) return;
     setErro("");
-    setSubstituindo(true);
+    setUploading(true);
     try {
-      const result = await api.replaceSpreadsheet(duplicado.reportId, duplicado.file);
+      const result = await api.replaceSpreadsheet(duplicado.reportId, duplicado.file, mapping);
       setReportId(result.reportId);
+      setSelectedFile(duplicado.file);
       setKpis(result.kpis);
       setMovimentacoes(result.movimentacoes);
       setSelected(selecaoRelevante(result.movimentacoes));
+      setLeitura(result.leitura);
       setDuplicado(null);
-      setStep(2);
     } catch (err) {
       setErro(err.message || "Erro ao substituir a planilha");
     } finally {
-      setSubstituindo(false);
+      setUploading(false);
     }
   };
 
@@ -209,12 +391,18 @@ export default function NovoRelatorio() {
   };
 
   const runAnalysis = async () => {
-    setStep(4);
+    setStep(3);
     setAnalyzing(true);
     setErro("");
     try {
       const result = await api.analyzeReport(reportId);
-      setNarrativas(result.narrativas);
+      // Backend assíncrono: responde "analisando" e roda a IA fora do request.
+      // Retrocompatível: se já vierem narrativas, usa direto; senão, faz polling.
+      if (result?.narrativas) {
+        setNarrativas(result.narrativas);
+      } else {
+        setNarrativas(await aguardarAnalise(reportId));
+      }
     } catch (err) {
       setErro(err.message || "Erro ao rodar análise de IA");
     } finally {
@@ -229,7 +417,7 @@ export default function NovoRelatorio() {
       await api.updateReport(reportId, { narrativas, selecionados: Object.keys(selected).filter((k) => selected[k]) });
       const final = await api.finalizeReport(reportId);
       setReportFinal(final);
-      setStep(5);
+      setStep(4);
     } catch (err) {
       setErro(err.message || "Erro ao finalizar relatório");
     } finally {
@@ -247,6 +435,7 @@ export default function NovoRelatorio() {
   };
 
   const totalAnexos = useMemo(() => Object.values(attachments).flat().length, [attachments]);
+  const mapeamentoPendente = Object.keys(mapping).length > 0;
 
   if (loadingResume) {
     return (
@@ -296,15 +485,15 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 0 — cliente */}
-        {step === 0 && (
+        {/* STEP 0 — cliente + período + planilha + confira a leitura */}
+        {step === 0 && !reportId && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
               Nova versão do relatório
             </h1>
             <p className="text-[13px] text-[#7A8394] mb-6">
-              Selecione o cliente (ou cadastre um novo). Cada envio de planilha gera uma nova versão do relatório
-              daquele cliente, mantendo as anteriores no histórico.
+              Escolha o cliente e o mês, e suba a planilha de acompanhamento processual. Cada envio gera uma nova versão
+              do relatório daquele cliente, mantendo as anteriores no histórico.
             </p>
 
             <label className="block text-[12px] font-medium text-[#44546A] mb-1">Cliente</label>
@@ -345,45 +534,51 @@ export default function NovoRelatorio() {
               {periodo ? `Aparecerá no relatório como “${periodoParaRotulo(periodo)}”.` : "Escolha o mês da carteira que esta planilha representa."}
             </p>
 
-            <button
-              disabled={!clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())}
-              onClick={() => setStep(1)}
-              className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-40"
-            >
-              Continuar <ArrowRight size={14} />
-            </button>
-          </div>
-        )}
-
-        {/* STEP 1 — upload */}
-        {step === 1 && (
-          <div>
-            <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
-              Enviar planilha do mês
-            </h1>
-            <p className="text-[13px] text-[#7A8394] mb-6">
-              Suba a planilha de acompanhamento processual exportada do sistema jurídico. O portal compara automaticamente com o último mês processado.
-            </p>
-
+            <label className="block text-[12px] font-medium text-[#44546A] mb-1">Planilha</label>
             <label
-              className={`border-2 border-dashed rounded-xl px-8 py-14 flex flex-col items-center justify-center text-center transition-colors cursor-pointer ${
-                uploading ? "border-[#9C7C38] bg-[#FBF8F2]" : "border-[#D9DCE1] hover:border-[#9C7C38] hover:bg-[#FBF8F2]"
+              className={`border-2 border-dashed rounded-xl px-8 py-10 flex flex-col items-center justify-center text-center transition-colors ${
+                !clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())
+                  ? "border-[#E7E9ED] bg-[#FAFBFC] cursor-not-allowed opacity-60"
+                  : uploading
+                  ? "border-[#9C7C38] bg-[#FBF8F2] cursor-wait"
+                  : "border-[#D9DCE1] hover:border-[#9C7C38] hover:bg-[#FBF8F2] cursor-pointer"
               }`}
             >
-              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUploadClick} disabled={uploading} />
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={onSelectFile}
+                disabled={uploading || !clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())}
+              />
               {uploading ? (
                 <>
-                  <Loader2 size={30} className="animate-spin text-[#142B4B] mb-3" />
+                  <Loader2 size={28} className="animate-spin text-[#142B4B] mb-3" />
                   <div className="text-[13px] text-[#44546A]">Lendo planilha e comparando com o mês anterior…</div>
                 </>
               ) : (
                 <>
-                  <Upload size={26} className="text-[#9AA2AF] mb-3" />
+                  <Upload size={24} className="text-[#9AA2AF] mb-3" />
                   <div className="text-[13px] font-medium text-[#44546A]">Clique para selecionar a planilha</div>
                   <div className="text-[11px] text-[#9AA2AF] mt-1">.xlsx exportado do sistema jurídico</div>
                 </>
               )}
             </label>
+
+            {/* Parse falhou mas há colunas para mapear: mostra a conferência/mapeador. */}
+            {leitura && !reportId && (
+              <div className="mt-5 flex flex-col gap-4">
+                <ConfiraLeitura leitura={leitura} mapping={mapping} setMapping={setMapping} />
+                <button
+                  onClick={() => enviar(selectedFile, mapping)}
+                  disabled={uploading}
+                  className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors self-start disabled:opacity-60"
+                >
+                  {uploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  Tentar novamente com o mapeamento
+                </button>
+              </div>
+            )}
 
             {duplicado && (
               <div className="mt-5 bg-[#F4EEDD] border border-[#E6D9B0] rounded-xl px-5 py-4">
@@ -397,10 +592,10 @@ export default function NovoRelatorio() {
                 <div className="flex flex-wrap gap-2 mt-4">
                   <button
                     onClick={substituirPlanilha}
-                    disabled={substituindo}
+                    disabled={uploading}
                     className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
                   >
-                    {substituindo ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                     Substituir planilha deste período
                   </button>
                   <button
@@ -424,8 +619,42 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 2 — o que mudou */}
-        {step === 2 && kpis && (
+        {/* STEP 0 (continuação) — confira a leitura após upload bem-sucedido */}
+        {step === 0 && reportId && leitura && (
+          <div>
+            <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
+              Confira a leitura da planilha
+            </h1>
+            <p className="text-[13px] text-[#7A8394] mb-6">
+              Antes de comparar com o mês anterior, confira se o portal entendeu a planilha corretamente. Se alguma
+              coluna ficou de fora, mapeie e reprocesse — o ajuste vale para os próximos meses deste cliente.
+            </p>
+
+            <ConfiraLeitura leitura={leitura} mapping={mapping} setMapping={setMapping} />
+
+            <div className="flex flex-wrap items-center gap-2 mt-6">
+              <button
+                onClick={() => setStep(1)}
+                className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
+              >
+                Está correto, continuar <ArrowRight size={14} />
+              </button>
+              {mapeamentoPendente && (
+                <button
+                  onClick={() => enviar(selectedFile, mapping)}
+                  disabled={uploading}
+                  className="inline-flex items-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-4 py-2.5 rounded-lg hover:bg-[#F5F6F8] transition-colors disabled:opacity-60"
+                >
+                  {uploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  Reprocessar com o mapeamento
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 1 — o que mudou */}
+        {step === 1 && kpis && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
               O que mudou
@@ -498,7 +727,7 @@ export default function NovoRelatorio() {
             </div>
 
             <button
-              onClick={() => setStep(3)}
+              onClick={() => setStep(2)}
               className="mt-6 inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
             >
               Continuar {selectedCount > 0 ? `(${selectedCount} selecionada${selectedCount > 1 ? "s" : ""})` : ""} <ArrowRight size={14} />
@@ -506,8 +735,8 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 3 — documentos */}
-        {step === 3 && (
+        {/* STEP 2 — documentos */}
+        {step === 2 && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
               Documentos de apoio
@@ -566,8 +795,8 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 4 — análise IA */}
-        {step === 4 && (
+        {/* STEP 3 — análise IA */}
+        {step === 3 && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
               Análise do período
@@ -582,7 +811,17 @@ export default function NovoRelatorio() {
                 <div className="text-[13px] text-[#44546A]">
                   Cruzando {movimentacoes.length} movimentações e {totalAnexos} documento(s) anexado(s)…
                 </div>
+                <div className="text-[11px] text-[#9AA2AF] mt-2">
+                  A análise roda em segundo plano — pode levar alguns minutos em meses grandes.
+                </div>
               </div>
+            ) : erro ? (
+              <button
+                onClick={runAnalysis}
+                className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
+              >
+                <RefreshCw size={14} /> Tentar análise novamente
+              </button>
             ) : (
               <div className="flex flex-col gap-4">
                 {narrativas.map((n, i) => (
@@ -613,8 +852,8 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 5 — pronto */}
-        {step === 5 && reportFinal && (
+        {/* STEP 4 — pronto */}
+        {step === 4 && reportFinal && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
               Relatório pronto
