@@ -10,6 +10,7 @@ import Clientes from "./pages/Clientes.jsx";
 import ClienteDetalhe from "./pages/ClienteDetalhe.jsx";
 import NovoRelatorio from "./pages/NovoRelatorio.jsx";
 import RelatorioVisualizar from "./pages/RelatorioVisualizar.jsx";
+import PublicRelatorio from "./pages/PublicRelatorio.jsx";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -30,6 +31,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Link público do relatório (sem login, fora da navegação interna). */}
+      <Route path="/r/:token" element={<PublicRelatorio />} />
       <Route
         element={
           <ProtectedRoute>

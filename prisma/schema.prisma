@@ -91,6 +91,9 @@ model Report {
   selecionados   Json?
   docxKey        String?
   pdfKey         String?
+  // Link público de visualização: token opaco + validade. Nulo = sem link ativo.
+  shareToken          String?   @unique
+  shareTokenExpiresAt DateTime?
   createdByEmail String?
   createdByName  String?
   createdAt      DateTime  @default(now())

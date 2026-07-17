@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 
 import express from "express";
 import multer from "multer";
@@ -160,6 +161,46 @@ async function computeReportInsights(report) {
 /** Nome de arquivo amigável para o relatório final: cliente + mês + extensão. */
 function reportFileName(cliente, mesReferencia, ext = "docx") {
   return `Relatorio_${cliente.replace(/\s+/g, "_")}_${mesReferencia.replace(/\//g, "-")}.${ext}`;
+}
+
+/**
+ * Número da versão do relatório na linha do tempo do cliente + os insights
+ * (KPIs, KPIs do mês anterior, panorama). Usado na visualização interna e na
+ * pública. `report` precisa incluir `upload`.
+ */
+async function buildReportView(report) {
+  const versao = await prisma.report.count({
+    where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
+  });
+  const { kpis, kpisAnterior, panorama } = await computeReportInsights(report);
+  return { versao, kpis, kpisAnterior, panorama };
+}
+
+/**
+ * Payload seguro do relatório para o link público: só os dados que a tela do
+ * cliente precisa mostrar. Omite chaves de arquivo, texto extraído de anexos,
+ * e-mail do autor, ids internos etc. `report` precisa incluir client/attachments.
+ */
+function publicReportPayload(report, view) {
+  return {
+    client: { nome: report.client.nome },
+    mesReferencia: report.mesReferencia,
+    versao: view.versao,
+    status: report.status,
+    kpis: view.kpis,
+    kpisAnterior: view.kpisAnterior,
+    panorama: view.panorama,
+    movimentacoes: report.movimentacoes ?? [],
+    narrativas: report.narrativas ?? [],
+    attachmentsCount: report.attachments.length,
+    hasPdf: !!report.pdfKey,
+    finalizedAt: report.finalizedAt,
+  };
+}
+
+/** True se o report tem link ativo (token presente e não expirado). */
+function shareTokenValido(report) {
+  return !!report?.shareTokenExpiresAt && report.shareTokenExpiresAt > new Date();
 }
 
 // ---------------------------------------------------------------------------
@@ -424,13 +465,66 @@ app.get("/api/reports/:id", requireAuth, async (req, res) => {
   });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
-  // Versão = posição do relatório na sequência do cliente (v1 = o primeiro).
-  const versao = await prisma.report.count({
-    where: { clientId: report.clientId, createdAt: { lte: report.createdAt } },
-  });
+  const { versao, kpis, kpisAnterior, panorama } = await buildReportView(report);
+  res.json({ ...report, versao, kpis, kpisAnterior, panorama, shareAtivo: shareTokenValido(report) });
+});
 
-  const { kpis, kpisAnterior, panorama } = await computeReportInsights(report);
-  res.json({ ...report, versao, kpis, kpisAnterior, panorama });
+// ---------------------------------------------------------------------------
+// Link seguro de visualização (link público por token)
+// ---------------------------------------------------------------------------
+
+// Gera/renova o token público do relatório com validade configurável (padrão
+// 30 dias). Autenticado — uso interno do escritório. Só para relatório pronto.
+app.post("/api/reports/:id/share-link", requireAuth, async (req, res) => {
+  const report = await prisma.report.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+  if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
+  if (report.status !== "pronto") {
+    return res.status(400).json({ error: "Finalize o relatório antes de gerar o link para o cliente." });
+  }
+
+  const diasReq = Number(req.body?.dias);
+  const dias = Number.isFinite(diasReq) && diasReq > 0 ? Math.min(Math.round(diasReq), 365) : 30;
+  const token = randomBytes(24).toString("base64url"); // opaco, ~32 chars, URL-safe
+  const expiresAt = new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
+
+  await prisma.report.update({ where: { id: report.id }, data: { shareToken: token, shareTokenExpiresAt: expiresAt } });
+  // O frontend monta a URL absoluta com a própria origem (window.location.origin).
+  res.json({ token, path: `/r/${token}`, expiresAt, dias });
+});
+
+// Revoga o link público (opcional — o token deixa de valer).
+app.delete("/api/reports/:id/share-link", requireAuth, async (req, res) => {
+  const report = await prisma.report.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
+  await prisma.report.update({ where: { id: report.id }, data: { shareToken: null, shareTokenExpiresAt: null } });
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Rotas públicas (SEM requireAuth) — só acessíveis com um token válido
+// ---------------------------------------------------------------------------
+
+app.get("/api/public/reports/:token", async (req, res) => {
+  const report = await prisma.report.findUnique({
+    where: { shareToken: req.params.token },
+    include: { client: true, attachments: true, upload: true },
+  });
+  // Token inválido OU expirado -> 404 genérico (não revela se o token existe).
+  if (!shareTokenValido(report)) return res.status(404).json({ error: "Relatório não encontrado" });
+
+  const view = await buildReportView(report);
+  res.json(publicReportPayload(report, view));
+});
+
+app.get("/api/public/reports/:token/pdf", async (req, res) => {
+  const report = await prisma.report.findUnique({
+    where: { shareToken: req.params.token },
+    include: { client: true },
+  });
+  if (!shareTokenValido(report) || !report.pdfKey) return res.status(404).json({ error: "Relatório não encontrado" });
+  const fileName = reportFileName(report.client.nome, report.mesReferencia, "pdf");
+  const url = await getSignedUrl(report.pdfKey, undefined, fileName);
+  res.json({ url });
 });
 
 // ---------------------------------------------------------------------------

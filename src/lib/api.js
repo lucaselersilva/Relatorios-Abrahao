@@ -76,4 +76,12 @@ export const api = {
 
   getDownloadUrl: async (reportId) => (await request(`/api/reports/${reportId}/download`)).url,
   getPdfDownloadUrl: async (reportId) => (await request(`/api/reports/${reportId}/download-pdf`)).url,
+
+  createShareLink: (reportId, dias) =>
+    request(`/api/reports/${reportId}/share-link`, { method: "POST", body: JSON.stringify(dias ? { dias } : {}) }),
+  revokeShareLink: (reportId) => request(`/api/reports/${reportId}/share-link`, { method: "DELETE" }),
+
+  // Rotas públicas (sem login) — usadas pela página /r/:token.
+  getPublicReport: (token) => request(`/api/public/reports/${token}`),
+  getPublicPdfUrl: async (token) => (await request(`/api/public/reports/${token}/pdf`)).url,
 };
