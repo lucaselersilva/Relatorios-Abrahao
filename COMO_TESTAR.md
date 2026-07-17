@@ -30,6 +30,15 @@ O `.env` já vem preenchido com o banco e o Supabase do projeto. Falta só:
 3. **Bucket de Storage.** Não precisa criar à mão — o app cria o bucket privado
    `relatorios` automaticamente no primeiro upload, se ainda não existir.
 
+4. **(Opcional) Monitoramento de erros (Sentry).** Desativado por padrão. Para
+   ligar, preencha o DSN no `.env` — backend e frontend usam variáveis
+   separadas (o frontend precisa do prefixo `VITE_`):
+   ```
+   SENTRY_DSN="https://...@...ingest.sentry.io/..."
+   VITE_SENTRY_DSN="https://...@...ingest.sentry.io/..."
+   ```
+   Sem essas variáveis, nada é enviado e o app funciona igual.
+
 ## 2. Rodar
 
 ```

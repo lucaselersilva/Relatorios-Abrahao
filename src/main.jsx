@@ -5,7 +5,11 @@ import App from "./App.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
 import { ErrorBoundary, ErrorScreen } from "./components/ErrorBoundary.jsx";
 import { supabaseConfigError } from "./lib/supabaseClient.js";
+import { initMonitoring } from "./lib/monitoring.js";
 import "./index.css";
+
+// Liga o monitoramento de erros se houver VITE_SENTRY_DSN (senão, no-op).
+initMonitoring();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 

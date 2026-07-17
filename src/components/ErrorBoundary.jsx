@@ -1,4 +1,5 @@
 import React from "react";
+import { captureError } from "../lib/monitoring.js";
 
 const NAVY = "#142B4B";
 
@@ -29,6 +30,7 @@ export class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     console.error("Erro não tratado na aplicação:", error, info);
+    captureError(error, info);
   }
 
   render() {

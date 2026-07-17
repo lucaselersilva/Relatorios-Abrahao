@@ -15,6 +15,9 @@ import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/d
 import { isPeriodoValido, periodoParaRotulo, periodoAtual } from "../lib/periodo.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
+import { initMonitoring, captureException } from "../lib/monitoring.js";
+
+initMonitoring();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
@@ -705,8 +708,9 @@ app.get("/api/reports/:id/download", requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
+app.use(async (err, req, res, next) => {
   console.error("Erro não tratado:", err);
+  await captureException(err);
   if (res.headersSent) return next(err);
   const isMulter = err?.name === "MulterError";
   const status = isMulter ? 400 : 500;

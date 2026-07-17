@@ -22,6 +22,8 @@
     "@anthropic-ai/sdk": "^0.111.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@sentry/node": "^10.66.0",
+    "@sentry/react": "^10.66.0",
     "@supabase/supabase-js": "^2.58.0",
     "@vercel/functions": "^3.7.5",
     "docx": "^9.7.1",
