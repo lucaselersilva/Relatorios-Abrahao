@@ -69,7 +69,7 @@ model Report {
   uploadId       String
   periodo        String?   // "YYYY-MM" — espelha o periodo do Upload de origem
   mesReferencia  String
-  status         String    @default("rascunho") // rascunho | pronto
+  status         String    @default("rascunho") // rascunho | analisando | erro | pronto
   movimentacoes  Json?
   narrativas     Json?
   selecionados   Json?

@@ -3,6 +3,7 @@ import path from "node:path";
 import express from "express";
 import multer from "multer";
 import { z } from "zod";
+import { waitUntil } from "@vercel/functions";
 
 import { Prisma } from "@prisma/client";
 
@@ -49,6 +50,26 @@ function parseMappingBody(raw) {
     return normalizeMapping(obj);
   } catch {
     return {};
+  }
+}
+
+/**
+ * Executa uma tarefa fora do ciclo request/response.
+ *
+ * No runtime serverless da Vercel o processo pode ser congelado assim que a
+ * resposta HTTP sai — então "continuar processando depois de responder" não é
+ * garantido. `waitUntil` (do @vercel/node, exposto por @vercel/functions) diz
+ * ao runtime para manter a função viva até a promise terminar, respeitando o
+ * teto de `maxDuration` da função (ver vercel.json). Fora da Vercel (dev local)
+ * `waitUntil` é inócuo e a promise simplesmente roda no próprio processo.
+ */
+function runInBackground(promise) {
+  // Uma falha aqui não pode virar unhandled rejection nem derrubar o processo.
+  const guarded = Promise.resolve(promise).catch((err) => console.error("Tarefa em background falhou:", err));
+  try {
+    waitUntil(guarded);
+  } catch {
+    // Sem contexto de request da Vercel: a promise já está rodando localmente.
   }
 }
 
@@ -526,31 +547,52 @@ app.delete("/api/reports/:id/attachments/:attachmentId", requireAuth, async (req
 // Análise de IA
 // ---------------------------------------------------------------------------
 
+/**
+ * Roda a análise de IA e grava o resultado no report. Feita fora do request
+ * (via runInBackground) porque a chamada ao Claude (Opus, effort alto) pode
+ * demorar. Marca o status conforme o resultado: "rascunho" (concluída) ou
+ * "erro" (falhou) — o frontend acompanha por polling em GET /api/reports/:id.
+ */
+async function analisarReportEmBackground(reportId) {
+  try {
+    const report = await prisma.report.findUnique({
+      where: { id: reportId },
+      include: { client: true, attachments: true },
+    });
+    if (!report) return;
+
+    const documentosTexto = report.attachments
+      .filter((a) => a.extractedText)
+      .map((a) => ({ processoNumero: a.processoNumero, fileName: a.fileName, texto: a.extractedText.slice(0, 6000) }));
+
+    const kpis = computeKpis(await prisma.processo.findMany({ where: { uploadId: report.uploadId } }));
+
+    const narrativas = await gerarAnaliseIA({
+      cliente: report.client.nome,
+      mesReferencia: report.mesReferencia,
+      kpis,
+      movimentacoes: report.movimentacoes,
+      documentosTexto,
+    });
+
+    await prisma.report.update({ where: { id: reportId }, data: { narrativas, status: "rascunho" } });
+  } catch (err) {
+    console.error("Falha na análise de IA:", err);
+    await prisma.report.update({ where: { id: reportId }, data: { status: "erro" } }).catch(() => {});
+  }
+}
+
 app.post("/api/reports/:id/analyze", requireAuth, async (req, res) => {
-  const report = await prisma.report.findUnique({
-    where: { id: req.params.id },
-    include: { client: true, attachments: true },
-  });
+  const report = await prisma.report.findUnique({ where: { id: req.params.id }, select: { id: true } });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
-  const documentosTexto = report.attachments
-    .filter((a) => a.extractedText)
-    .map((a) => ({ processoNumero: a.processoNumero, fileName: a.fileName, texto: a.extractedText.slice(0, 6000) }));
+  // Marca "analisando" e limpa a análise anterior antes de responder, para o
+  // polling do frontend saber que uma nova análise está em andamento.
+  await prisma.report.update({ where: { id: report.id }, data: { status: "analisando", narrativas: Prisma.DbNull } });
 
-  const kpis = computeKpis(
-    await prisma.processo.findMany({ where: { uploadId: report.uploadId } })
-  );
-
-  const narrativas = await gerarAnaliseIA({
-    cliente: report.client.nome,
-    mesReferencia: report.mesReferencia,
-    kpis,
-    movimentacoes: report.movimentacoes,
-    documentosTexto,
-  });
-
-  await prisma.report.update({ where: { id: report.id }, data: { narrativas } });
-  res.json({ narrativas });
+  // Dispara a análise fora do request e responde na hora (o frontend faz polling).
+  runInBackground(analisarReportEmBackground(report.id));
+  res.status(202).json({ status: "analisando" });
 });
 
 app.patch("/api/reports/:id", requireAuth, async (req, res) => {
