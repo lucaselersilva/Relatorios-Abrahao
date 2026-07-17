@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { useAuth } from "./context/AuthContext.jsx";
 import Layout from "./components/Layout.jsx";
 import Login from "./pages/Login.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
 import Historico from "./pages/Historico.jsx";
 import Clientes from "./pages/Clientes.jsx";
 import ClienteDetalhe from "./pages/ClienteDetalhe.jsx";
@@ -36,14 +37,14 @@ export default function App() {
           </ProtectedRoute>
         }
       >
+        <Route path="/" element={<Dashboard />} />
         <Route path="/historico" element={<Historico />} />
         <Route path="/clientes" element={<Clientes />} />
         <Route path="/clientes/:id" element={<ClienteDetalhe />} />
         <Route path="/relatorios/novo" element={<NovoRelatorio />} />
         <Route path="/relatorios/:id" element={<RelatorioVisualizar />} />
-        <Route path="/" element={<Navigate to="/historico" replace />} />
       </Route>
-      <Route path="*" element={<Navigate to="/historico" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

@@ -222,6 +222,7 @@ export default function NovoRelatorio() {
   const [searchParams] = useSearchParams();
   const resumeId = searchParams.get("reportId");
   const preClientId = searchParams.get("clientId");
+  const prePeriodo = searchParams.get("periodo");
 
   const [step, setStep] = useState(0);
   const [loadingResume, setLoadingResume] = useState(!!resumeId);
@@ -230,7 +231,7 @@ export default function NovoRelatorio() {
   const [clientId, setClientId] = useState(preClientId || "");
   const [versao, setVersao] = useState(null);
   const [novoClienteNome, setNovoClienteNome] = useState("");
-  const [periodo, setPeriodo] = useState(""); // "YYYY-MM"
+  const [periodo, setPeriodo] = useState(/^\d{4}-\d{2}$/.test(prePeriodo || "") ? prePeriodo : ""); // "YYYY-MM"
   const [mesReferencia, setMesReferencia] = useState(""); // rótulo de exibição
   const [clienteNomeExibicao, setClienteNomeExibicao] = useState("");
 

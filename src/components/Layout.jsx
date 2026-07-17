@@ -1,6 +1,6 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { FilePlus2, History, Users, LogOut } from "lucide-react";
+import { FilePlus2, History, Users, LogOut, LayoutDashboard } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { LOGO_SRC } from "../assets/logo.js";
 
@@ -37,6 +37,9 @@ export default function Layout() {
 
         <div className="px-3 mt-5 flex flex-col gap-0.5">
           <div className="text-[10px] font-semibold text-[#9AA2AF] uppercase tracking-wide px-2.5 mb-1.5">Navegação</div>
+          <NavLink to="/" end className={navLinkClass}>
+            <LayoutDashboard size={15} /> Início
+          </NavLink>
           <NavLink to="/historico" className={navLinkClass}>
             <History size={15} /> Histórico de relatórios
           </NavLink>

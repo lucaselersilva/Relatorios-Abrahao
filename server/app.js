@@ -12,7 +12,7 @@ import { requireAuth } from "../lib/auth.js";
 import { uploadFile, getSignedUrl, removeFiles } from "../lib/storage.js";
 import { parseSpreadsheet, normalizeMapping, CAMPOS_SISTEMA } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
-import { isPeriodoValido, periodoParaRotulo } from "../lib/periodo.js";
+import { isPeriodoValido, periodoParaRotulo, periodoAtual } from "../lib/periodo.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 
@@ -204,6 +204,48 @@ app.patch("/api/clients/:id", requireAuth, async (req, res) => {
   } catch {
     res.status(404).json({ error: "Cliente não encontrado" });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Dashboard — ciclo do mês corrente: status do relatório de cada cliente
+// ---------------------------------------------------------------------------
+
+app.get("/api/dashboard", requireAuth, async (req, res) => {
+  const periodo = periodoAtual();
+
+  // Para cada cliente, o relatório do período corrente (se houver).
+  const clients = await prisma.client.findMany({
+    orderBy: { nome: "asc" },
+    include: {
+      reports: {
+        where: { periodo },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true, createdAt: true, finalizedAt: true },
+      },
+    },
+  });
+
+  const clientes = clients.map((c) => {
+    const r = c.reports[0];
+    return {
+      id: c.id,
+      nome: c.nome,
+      status: r?.status ?? "sem_relatorio",
+      reportId: r?.id ?? null,
+      atualizadoEm: r?.finalizedAt ?? r?.createdAt ?? null,
+    };
+  });
+
+  const emAndamento = ["rascunho", "analisando", "erro"];
+  const resumo = {
+    total: clientes.length,
+    prontos: clientes.filter((c) => c.status === "pronto").length,
+    emAndamento: clientes.filter((c) => emAndamento.includes(c.status)).length,
+    semRelatorio: clientes.filter((c) => c.status === "sem_relatorio").length,
+  };
+
+  res.json({ periodo, mesReferencia: periodoParaRotulo(periodo), resumo, clientes });
 });
 
 // ---------------------------------------------------------------------------
