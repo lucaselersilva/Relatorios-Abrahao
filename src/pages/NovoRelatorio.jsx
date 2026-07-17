@@ -27,6 +27,19 @@ function Badge({ tipo }) {
   return <span className={`text-[11px] font-semibold tracking-wide px-2 py-1 rounded-full ${m.cls}`}>{m.label}</span>;
 }
 
+// Movimentações que a própria planilha já sinaliza como mais relevantes
+// (mudança de valor ou acordo/homologação) vêm pré-marcadas para anexo — o
+// usuário não precisa revisar processo a processo, mas pode ajustar a seleção.
+const isRelevante = (m) => m.prioridade === "alta" || m.tipo === "acordo";
+
+function selecaoRelevante(movimentacoes) {
+  const sel = {};
+  for (const m of movimentacoes) {
+    if (isRelevante(m)) sel[m.numero] = true;
+  }
+  return sel;
+}
+
 function AreaIcon({ area }) {
   if (area === "Trabalhista") return <Gavel size={15} className="text-[#44546A]" />;
   if (area === "Tributário") return <Building2 size={15} className="text-[#44546A]" />;
@@ -81,6 +94,8 @@ export default function NovoRelatorio() {
           attByNumero[a.processoNumero] = [...(attByNumero[a.processoNumero] ?? []), a];
         }
         setAttachments(attByNumero);
+        // Mantém marcadas as relevantes + qualquer uma que já tenha documento anexado.
+        setSelected({ ...selecaoRelevante(r.movimentacoes ?? []), ...Object.fromEntries(Object.keys(attByNumero).map((n) => [n, true])) });
         if (r.narrativas) setNarrativas(r.narrativas);
         setStep(2);
       })
@@ -117,6 +132,7 @@ export default function NovoRelatorio() {
       setKpis(result.kpis);
       setVersao(result.versao ?? null);
       setMovimentacoes(result.movimentacoes);
+      setSelected(selecaoRelevante(result.movimentacoes));
       setStep(2);
     } catch (err) {
       setErro(err.message || "Erro ao processar a planilha");
@@ -392,7 +408,7 @@ export default function NovoRelatorio() {
             )}
 
             <div className="text-[11px] text-[#9AA2AF] mt-3">
-              Marque as movimentações para as quais você quer anexar o documento — isso deixa a análise da IA mais precisa. É opcional.
+              Já marcamos as movimentações mais relevantes do mês (alteração de valor ou acordo/homologação) para anexo — desmarque ou marque outras se quiser. É opcional.
             </div>
 
             <button
