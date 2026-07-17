@@ -90,6 +90,7 @@ model Report {
   narrativas     Json?
   selecionados   Json?
   docxKey        String?
+  pdfKey         String?
   createdByEmail String?
   createdByName  String?
   createdAt      DateTime  @default(now())

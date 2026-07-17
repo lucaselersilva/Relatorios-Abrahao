@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FilePlus2, Search, Download, ChevronRight, CheckCircle2, Loader2, Eye } from "lucide-react";
+import { FilePlus2, Search, Download, FileText, ChevronRight, CheckCircle2, Loader2, Eye } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const NAVY = "#142B4B";
@@ -34,6 +34,15 @@ export default function Historico() {
   const handleDownload = async (id) => {
     try {
       const url = await api.getDownloadUrl(id);
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDownloadPdf = async (id) => {
+    try {
+      const url = await api.getPdfDownloadUrl(id);
       window.open(url, "_blank");
     } catch (err) {
       console.error(err);
@@ -162,12 +171,22 @@ export default function Historico() {
                         <Eye size={13} /> Visualizar
                       </button>
                       {h.status === "pronto" ? (
-                        <button
-                          onClick={() => handleDownload(h.id)}
-                          className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
-                        >
-                          <Download size={13} /> Baixar
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handleDownload(h.id)}
+                            className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
+                          >
+                            <Download size={13} /> .docx
+                          </button>
+                          {h.pdf && (
+                            <button
+                              onClick={() => handleDownloadPdf(h.id)}
+                              className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
+                            >
+                              <FileText size={13} /> PDF
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <button
                           onClick={() => navigate(`/relatorios/novo?reportId=${h.id}`)}

@@ -122,6 +122,7 @@ export default function RelatorioVisualizar() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [baixando, setBaixando] = useState(false);
+  const [baixandoPdf, setBaixandoPdf] = useState(false);
 
   useEffect(() => {
     api
@@ -165,6 +166,18 @@ export default function RelatorioVisualizar() {
     }
   };
 
+  const handleDownloadPdf = async () => {
+    setBaixandoPdf(true);
+    try {
+      const url = await api.getPdfDownloadUrl(id);
+      window.open(url, "_blank");
+    } catch (e) {
+      setErro(e.message || "Erro ao baixar o PDF");
+    } finally {
+      setBaixandoPdf(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="px-10 py-10 flex items-center gap-2 text-[13px] text-[#7A8394]">
@@ -184,7 +197,7 @@ export default function RelatorioVisualizar() {
     );
   }
 
-  const { client, mesReferencia, versao, status, kpis, kpisAnterior, movimentacoes = [], narrativas = [], attachments = [], docxKey } = data;
+  const { client, mesReferencia, versao, status, kpis, kpisAnterior, movimentacoes = [], narrativas = [], attachments = [], docxKey, pdfKey } = data;
   const maxTop = panoramaView?.topExposicoes?.[0]?.valor || 0;
   const maxMov = Math.max(1, ...Object.values(movPorTipo));
 
@@ -202,13 +215,24 @@ export default function RelatorioVisualizar() {
           <ArrowLeft size={13} /> Voltar
         </button>
         {docxKey ? (
-          <button
-            onClick={handleDownload}
-            disabled={baixando}
-            className="flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
-          >
-            {baixando ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Baixar .docx
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownload}
+              disabled={baixando}
+              className="flex items-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#F5F6F8] transition-colors disabled:opacity-60"
+            >
+              {baixando ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} .docx
+            </button>
+            {pdfKey && (
+              <button
+                onClick={handleDownloadPdf}
+                disabled={baixandoPdf}
+                className="flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
+              >
+                {baixandoPdf ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} Baixar PDF
+              </button>
+            )}
+          </div>
         ) : (
           <button
             onClick={() => navigate(`/relatorios/novo?reportId=${id}`)}

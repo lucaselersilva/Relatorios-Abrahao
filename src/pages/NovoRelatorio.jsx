@@ -435,6 +435,15 @@ export default function NovoRelatorio() {
     }
   };
 
+  const handleDownloadPdf = async () => {
+    try {
+      const url = await api.getPdfDownloadUrl(reportFinal.id);
+      window.open(url, "_blank");
+    } catch (err) {
+      setErro(err.message || "Erro ao baixar o PDF");
+    }
+  };
+
   const totalAnexos = useMemo(() => Object.values(attachments).flat().length, [attachments]);
   const mapeamentoPendente = Object.keys(mapping).length > 0;
 
@@ -897,6 +906,12 @@ export default function NovoRelatorio() {
                   className="flex-1 flex items-center justify-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#1c3a63] transition-colors"
                 >
                   <Download size={14} /> Baixar (.docx)
+                </button>
+                <button
+                  onClick={handleDownloadPdf}
+                  className="flex-1 flex items-center justify-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-3 rounded-lg hover:bg-[#1c3a63] transition-colors"
+                >
+                  <FileText size={14} /> Baixar PDF
                 </button>
                 <button
                   onClick={() => navigate("/historico")}

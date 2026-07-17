@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, FilePlus2, Download, ChevronRight, CheckCircle2, Loader2,
   Building2, Layers, Paperclip, AlertTriangle, TrendingUp, Eye, Trash2,
-  Mail, Star, Plus,
+  Mail, Star, Plus, FileText,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 
@@ -153,6 +153,15 @@ export default function ClienteDetalhe() {
   const handleDownload = async (reportId) => {
     try {
       const url = await api.getDownloadUrl(reportId);
+      window.open(url, "_blank");
+    } catch (e) {
+      setErro(e.message);
+    }
+  };
+
+  const handleDownloadPdf = async (reportId) => {
+    try {
+      const url = await api.getPdfDownloadUrl(reportId);
       window.open(url, "_blank");
     } catch (e) {
       setErro(e.message);
@@ -432,12 +441,22 @@ export default function ClienteDetalhe() {
                   <Eye size={13} /> Visualizar
                 </button>
                 {v.docxDisponivel ? (
-                  <button
-                    onClick={() => handleDownload(v.id)}
-                    className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
-                  >
-                    <Download size={13} /> Baixar
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleDownload(v.id)}
+                      className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
+                    >
+                      <Download size={13} /> .docx
+                    </button>
+                    {v.pdfDisponivel && (
+                      <button
+                        onClick={() => handleDownloadPdf(v.id)}
+                        className="flex items-center gap-1 text-[12px] text-[#142B4B] font-medium hover:underline"
+                      >
+                        <FileText size={13} /> PDF
+                      </button>
+                    )}
+                  </>
                 ) : (
                   <button
                     onClick={() => navigate(`/relatorios/novo?reportId=${v.id}`)}

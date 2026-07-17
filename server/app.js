@@ -15,6 +15,7 @@ import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/d
 import { isPeriodoValido, periodoParaRotulo, periodoAtual } from "../lib/periodo.js";
 import { gerarAnaliseIA } from "../lib/ai.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
+import { generateReportPdf } from "../lib/pdf-generator.js";
 import { initMonitoring, captureException } from "../lib/monitoring.js";
 
 initMonitoring();
@@ -156,9 +157,9 @@ async function computeReportInsights(report) {
   return { kpis, kpisAnterior, panorama };
 }
 
-/** Nome de arquivo amigável para o .docx final: cliente + mês de referência. */
-function reportFileName(cliente, mesReferencia) {
-  return `Relatorio_${cliente.replace(/\s+/g, "_")}_${mesReferencia.replace(/\//g, "-")}.docx`;
+/** Nome de arquivo amigável para o relatório final: cliente + mês + extensão. */
+function reportFileName(cliente, mesReferencia, ext = "docx") {
+  return `Relatorio_${cliente.replace(/\s+/g, "_")}_${mesReferencia.replace(/\//g, "-")}.${ext}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +290,7 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
       finalizedAt: r.finalizedAt,
       autor: r.createdByName || r.createdByEmail || "-",
       docxDisponivel: !!r.docxKey,
+      pdfDisponivel: !!r.pdfKey,
       totalAnexos: r._count.attachments,
       totalMovimentacoes: resumo.total,
       porTipo: resumo.porTipo,
@@ -409,6 +411,8 @@ app.get("/api/reports", requireAuth, async (req, res) => {
       geradoEm: r.finalizedAt ?? r.createdAt,
       status: r.status,
       autor: r.createdByName || r.createdByEmail || "-",
+      docx: !!r.docxKey,
+      pdf: !!r.pdfKey,
     }))
   );
 });
@@ -745,7 +749,8 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
 
   const { kpis, kpisAnterior, panorama } = await computeReportInsights(report);
 
-  const buffer = await generateReportDocx({
+  // Mesmos dados alimentam os dois formatos (.docx e PDF) — mesmo visual.
+  const dadosRelatorio = {
     cliente: report.client.nome,
     mesReferencia: report.mesReferencia,
     versao,
@@ -755,14 +760,18 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
     movimentacoes: report.movimentacoes ?? [],
     panorama,
     totalAnexos: report.attachments.length,
-  });
+  };
 
-  const fileName = reportFileName(report.client.nome, report.mesReferencia);
-  const { key: docxKey } = await uploadFile(buffer, fileName, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  const [docxBuffer, pdfBuffer] = await Promise.all([generateReportDocx(dadosRelatorio), generateReportPdf(dadosRelatorio)]);
+
+  const [{ key: docxKey }, { key: pdfKey }] = await Promise.all([
+    uploadFile(docxBuffer, reportFileName(report.client.nome, report.mesReferencia, "docx"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    uploadFile(pdfBuffer, reportFileName(report.client.nome, report.mesReferencia, "pdf"), "application/pdf"),
+  ]);
 
   const updated = await prisma.report.update({
     where: { id: report.id },
-    data: { status: "pronto", docxKey, finalizedAt: new Date() },
+    data: { status: "pronto", docxKey, pdfKey, finalizedAt: new Date() },
   });
 
   res.json(updated);
@@ -771,8 +780,16 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
 app.get("/api/reports/:id/download", requireAuth, async (req, res) => {
   const report = await prisma.report.findUnique({ where: { id: req.params.id }, include: { client: true } });
   if (!report?.docxKey) return res.status(404).json({ error: "Relatório ainda não foi finalizado" });
-  const fileName = reportFileName(report.client.nome, report.mesReferencia);
+  const fileName = reportFileName(report.client.nome, report.mesReferencia, "docx");
   const url = await getSignedUrl(report.docxKey, undefined, fileName);
+  res.json({ url });
+});
+
+app.get("/api/reports/:id/download-pdf", requireAuth, async (req, res) => {
+  const report = await prisma.report.findUnique({ where: { id: req.params.id }, include: { client: true } });
+  if (!report?.pdfKey) return res.status(404).json({ error: "PDF ainda não foi gerado para este relatório" });
+  const fileName = reportFileName(report.client.nome, report.mesReferencia, "pdf");
+  const url = await getSignedUrl(report.pdfKey, undefined, fileName);
   res.json({ url });
 });
 

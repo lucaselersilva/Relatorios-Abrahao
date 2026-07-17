@@ -75,4 +75,5 @@ export const api = {
   finalizeReport: (reportId) => request(`/api/reports/${reportId}/finalize`, { method: "POST" }),
 
   getDownloadUrl: async (reportId) => (await request(`/api/reports/${reportId}/download`)).url,
+  getPdfDownloadUrl: async (reportId) => (await request(`/api/reports/${reportId}/download-pdf`)).url,
 };
