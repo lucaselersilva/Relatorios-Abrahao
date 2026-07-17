@@ -22,8 +22,24 @@ model Client {
   // mais recente por cliente e reaplicamos nos uploads seguintes.
   columnMapping Json?
 
-  uploads Upload[]
-  reports Report[]
+  uploads  Upload[]
+  reports  Report[]
+  contacts Contact[]
+}
+
+// Contatos do cliente (destinatários dos relatórios). Um cliente pode ter mais
+// de um contato (ex.: financeiro + jurídico); `principal` marca quem recebe por
+// padrão no envio.
+model Contact {
+  id        String   @id @default(cuid())
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId  String
+  nome      String
+  email     String
+  principal Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
 }
 
 model Upload {

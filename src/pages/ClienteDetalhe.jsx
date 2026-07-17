@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, FilePlus2, Download, ChevronRight, CheckCircle2, Loader2,
   Building2, Layers, Paperclip, AlertTriangle, TrendingUp, Eye, Trash2,
+  Mail, Star, Plus,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 
@@ -41,14 +42,65 @@ export default function ClienteDetalhe() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [periodo, setPeriodo] = useState("6m");
+  const [contacts, setContacts] = useState([]);
+  const [novoContato, setNovoContato] = useState({ nome: "", email: "", principal: false });
+  const [contatoErro, setContatoErro] = useState("");
+  const [salvandoContato, setSalvandoContato] = useState(false);
 
   useEffect(() => {
     api
       .getClient(id)
-      .then(setData)
+      .then((d) => {
+        setData(d);
+        setContacts(d.contacts ?? []);
+      })
       .catch((e) => setErro(e.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const reloadContacts = async () => {
+    const d = await api.getClient(id);
+    setContacts(d.contacts ?? []);
+  };
+
+  const handleAddContact = async (e) => {
+    e.preventDefault();
+    setContatoErro("");
+    if (!novoContato.nome.trim() || !novoContato.email.trim()) {
+      setContatoErro("Preencha nome e e-mail.");
+      return;
+    }
+    setSalvandoContato(true);
+    try {
+      await api.addContact(id, novoContato);
+      setNovoContato({ nome: "", email: "", principal: false });
+      await reloadContacts();
+    } catch (err) {
+      setContatoErro(err.message);
+    } finally {
+      setSalvandoContato(false);
+    }
+  };
+
+  const handleSetPrincipal = async (contactId) => {
+    setContatoErro("");
+    try {
+      await api.updateContact(id, contactId, { principal: true });
+      await reloadContacts();
+    } catch (err) {
+      setContatoErro(err.message);
+    }
+  };
+
+  const handleRemoveContact = async (contactId) => {
+    setContatoErro("");
+    try {
+      await api.removeContact(id, contactId);
+      await reloadContacts();
+    } catch (err) {
+      setContatoErro(err.message);
+    }
+  };
 
   // Agregação de movimentações dentro do intervalo escolhido (feita no cliente,
   // a partir das versões já carregadas).
@@ -175,6 +227,94 @@ export default function ClienteDetalhe() {
           </div>
         </>
       )}
+
+      {/* Contatos do cliente (destinatários dos relatórios) */}
+      <div className="flex items-center gap-2 mb-3">
+        <div className="text-[12px] font-semibold text-[#44546A] uppercase tracking-wide">Contatos</div>
+        <span className="text-[11px] text-[#9AA2AF]">— destinatários do relatório por e-mail</span>
+      </div>
+      <div className="bg-white border border-[#E2E5EA] rounded-lg overflow-hidden mb-10">
+        {contacts.length === 0 ? (
+          <div className="px-5 py-4 text-[12.5px] text-[#9AA2AF]">
+            Nenhum contato cadastrado. Adicione ao menos um para poder enviar o relatório por e-mail.
+          </div>
+        ) : (
+          contacts.map((c, i) => (
+            <div
+              key={c.id}
+              className={`flex items-center gap-3 px-5 py-3 ${i !== contacts.length - 1 ? "border-b border-[#F3F4F6]" : ""}`}
+            >
+              <div className="w-8 h-8 rounded-lg bg-[#F0EDE3] flex items-center justify-center shrink-0">
+                <Mail size={14} className="text-[#142B4B]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-medium text-[#1C2430] truncate">{c.nome}</span>
+                  {c.principal && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#F4EEDD] text-[#8A6D1F]">
+                      <Star size={10} /> Principal
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11.5px] text-[#9AA2AF] truncate">{c.email}</div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                {!c.principal && (
+                  <button
+                    onClick={() => handleSetPrincipal(c.id)}
+                    className="flex items-center gap-1 text-[12px] text-[#8A6D1F] font-medium hover:underline"
+                    title="Definir como contato principal"
+                  >
+                    <Star size={12} /> Tornar principal
+                  </button>
+                )}
+                <button
+                  onClick={() => handleRemoveContact(c.id)}
+                  className="flex items-center gap-1 text-[12px] text-[#A33B3B] font-medium hover:underline"
+                  title="Remover contato"
+                >
+                  <Trash2 size={12} /> Remover
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+        <form onSubmit={handleAddContact} className="flex items-center gap-2 px-5 py-3 border-t border-[#F3F4F6] bg-[#FAFAFB] flex-wrap">
+          <input
+            value={novoContato.nome}
+            onChange={(e) => setNovoContato((v) => ({ ...v, nome: e.target.value }))}
+            placeholder="Nome do contato"
+            className="flex-1 min-w-[140px] text-[13px] px-3 py-2 rounded-lg border border-[#D9DCE1] focus:outline-none focus:border-[#142B4B]"
+          />
+          <input
+            value={novoContato.email}
+            onChange={(e) => setNovoContato((v) => ({ ...v, email: e.target.value }))}
+            placeholder="email@empresa.com"
+            type="email"
+            className="flex-1 min-w-[180px] text-[13px] px-3 py-2 rounded-lg border border-[#D9DCE1] focus:outline-none focus:border-[#142B4B]"
+          />
+          <label className="flex items-center gap-1.5 text-[12px] text-[#44546A] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={novoContato.principal}
+              onChange={(e) => setNovoContato((v) => ({ ...v, principal: e.target.checked }))}
+            />
+            Principal
+          </label>
+          <button
+            type="submit"
+            disabled={salvandoContato}
+            className="flex items-center gap-1.5 bg-[#142B4B] text-white text-[12.5px] font-medium px-3 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
+          >
+            {salvandoContato ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Adicionar
+          </button>
+        </form>
+        {contatoErro && (
+          <div className="flex items-center gap-2 px-5 py-2 text-[12px] text-[#A33B3B] border-t border-[#F3F4F6]">
+            <AlertTriangle size={13} /> {contatoErro}
+          </div>
+        )}
+      </div>
 
       {/* Movimentações no intervalo */}
       <div className="flex items-center justify-between mb-3">

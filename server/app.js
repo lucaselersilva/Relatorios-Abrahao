@@ -33,6 +33,18 @@ const columnMappingSchema = z.record(z.enum(CAMPOS_SISTEMA), z.string()).nullabl
 const patchClientSchema = z
   .object({ nome: z.string().trim().min(1).optional(), columnMapping: columnMappingSchema.optional() })
   .refine((v) => v.nome !== undefined || v.columnMapping !== undefined, "Nada para atualizar");
+const contactSchema = z.object({
+  nome: z.string().trim().min(1, "Nome do contato é obrigatório"),
+  email: z.string().trim().email("E-mail inválido"),
+  principal: z.boolean().optional(),
+});
+const patchContactSchema = z
+  .object({
+    nome: z.string().trim().min(1).optional(),
+    email: z.string().trim().email("E-mail inválido").optional(),
+    principal: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, "Nada para atualizar");
 const narrativaSchema = z.object({ titulo: z.string(), texto: z.string(), fonte: z.string() });
 const patchReportSchema = z.object({
   narrativas: z.array(narrativaSchema).optional(),
@@ -300,11 +312,72 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
     }));
   const kpisAtuais = ultimoUpload ? computeKpis(ultimoUpload.processos) : null;
 
+  const contacts = await prisma.contact.findMany({
+    where: { clientId: client.id },
+    orderBy: [{ principal: "desc" }, { nome: "asc" }],
+  });
+
   res.json({
     client: { id: client.id, nome: client.nome, createdAt: client.createdAt },
     kpisAtuais,
+    contacts,
     versoes: [...versoes].reverse(), // mais recente primeiro para exibição
   });
+});
+
+// ---------------------------------------------------------------------------
+// Contatos do cliente (destinatários dos relatórios — pré-requisito do envio)
+// ---------------------------------------------------------------------------
+
+app.post("/api/clients/:id/contacts", requireAuth, async (req, res) => {
+  const parsed = contactSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Payload inválido" });
+
+  const client = await prisma.client.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado" });
+
+  const contact = await prisma.$transaction(async (tx) => {
+    // Só um principal por cliente: marcar este desmarca os demais.
+    if (parsed.data.principal) {
+      await tx.contact.updateMany({ where: { clientId: client.id }, data: { principal: false } });
+    }
+    return tx.contact.create({
+      data: {
+        clientId: client.id,
+        nome: parsed.data.nome,
+        email: parsed.data.email,
+        principal: parsed.data.principal ?? false,
+      },
+    });
+  });
+  res.status(201).json(contact);
+});
+
+app.patch("/api/clients/:id/contacts/:contactId", requireAuth, async (req, res) => {
+  const parsed = patchContactSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Payload inválido" });
+
+  const existing = await prisma.contact.findUnique({ where: { id: req.params.contactId } });
+  if (!existing || existing.clientId !== req.params.id) {
+    return res.status(404).json({ error: "Contato não encontrado neste cliente" });
+  }
+
+  const contact = await prisma.$transaction(async (tx) => {
+    if (parsed.data.principal) {
+      await tx.contact.updateMany({ where: { clientId: existing.clientId }, data: { principal: false } });
+    }
+    return tx.contact.update({ where: { id: existing.id }, data: parsed.data });
+  });
+  res.json(contact);
+});
+
+app.delete("/api/clients/:id/contacts/:contactId", requireAuth, async (req, res) => {
+  const existing = await prisma.contact.findUnique({ where: { id: req.params.contactId } });
+  if (!existing || existing.clientId !== req.params.id) {
+    return res.status(404).json({ error: "Contato não encontrado neste cliente" });
+  }
+  await prisma.contact.delete({ where: { id: existing.id } });
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

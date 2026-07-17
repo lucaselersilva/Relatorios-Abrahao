@@ -29,6 +29,13 @@ export const api = {
   createClient: (nome) => request("/api/clients", { method: "POST", body: JSON.stringify({ nome }) }),
   updateClient: (id, data) => request(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
+  addContact: (clientId, data) =>
+    request(`/api/clients/${clientId}/contacts`, { method: "POST", body: JSON.stringify(data) }),
+  updateContact: (clientId, contactId, data) =>
+    request(`/api/clients/${clientId}/contacts/${contactId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  removeContact: (clientId, contactId) =>
+    request(`/api/clients/${clientId}/contacts/${contactId}`, { method: "DELETE" }),
+
   listReports: () => request("/api/reports"),
   getReport: (id) => request(`/api/reports/${id}`),
 
