@@ -327,6 +327,7 @@ app.get("/api/reports", requireAuth, async (req, res) => {
       id: r.id,
       clienteId: r.clientId,
       cliente: r.client.nome,
+      periodo: r.periodo,
       mes: r.mesReferencia,
       versao: versaoPorId[r.id],
       geradoEm: r.finalizedAt ?? r.createdAt,

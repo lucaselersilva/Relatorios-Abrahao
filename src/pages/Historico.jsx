@@ -24,6 +24,8 @@ export default function Historico() {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
+  const [filtroPeriodo, setFiltroPeriodo] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("");
 
   useEffect(() => {
     api.listReports().then(setReports).catch(console.error).finally(() => setLoading(false));
@@ -38,7 +40,20 @@ export default function Historico() {
     }
   };
 
-  const filtrados = reports.filter((r) => r.cliente.toLowerCase().includes(busca.toLowerCase()));
+  // Meses distintos presentes no histórico (periodo -> rótulo), do mais recente
+  // para o mais antigo, para o filtro por mês.
+  const periodos = [...new Map(reports.filter((r) => r.periodo).map((r) => [r.periodo, r.mes])).entries()].sort(
+    (a, b) => b[0].localeCompare(a[0])
+  );
+
+  // Filtro client-side (mesma abordagem da busca por cliente). Se o histórico
+  // crescer muito, mover para o backend (query params em GET /api/reports).
+  const filtrados = reports.filter((r) => {
+    const okBusca = r.cliente.toLowerCase().includes(busca.toLowerCase());
+    const okPeriodo = !filtroPeriodo || r.periodo === filtroPeriodo;
+    const okStatus = !filtroStatus || (filtroStatus === "pronto" ? r.status === "pronto" : r.status !== "pronto");
+    return okBusca && okPeriodo && okStatus;
+  });
 
   return (
     <div className="px-10 py-10 max-w-5xl">
@@ -55,14 +70,43 @@ export default function Historico() {
       </div>
       <p className="text-[13px] text-[#7A8394] mb-6">Todos os relatórios gerados pelo escritório, por cliente e mês de referência.</p>
 
-      <div className="flex items-center gap-2 mb-4 bg-white border border-[#E2E5EA] rounded-lg px-3 py-2 max-w-sm">
-        <Search size={14} className="text-[#9AA2AF]" />
-        <input
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar por cliente…"
-          className="text-[13px] outline-none w-full placeholder:text-[#B3B9C2]"
-        />
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 bg-white border border-[#E2E5EA] rounded-lg px-3 py-2 w-full max-w-xs">
+          <Search size={14} className="text-[#9AA2AF]" />
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por cliente…"
+            className="text-[13px] outline-none w-full placeholder:text-[#B3B9C2]"
+          />
+        </div>
+        <select
+          value={filtroPeriodo}
+          onChange={(e) => setFiltroPeriodo(e.target.value)}
+          className="text-[13px] border border-[#E2E5EA] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#9C7C38] text-[#44546A]"
+        >
+          <option value="">Todos os meses</option>
+          {periodos.map(([periodo, rotulo]) => (
+            <option key={periodo} value={periodo}>{rotulo}</option>
+          ))}
+        </select>
+        <select
+          value={filtroStatus}
+          onChange={(e) => setFiltroStatus(e.target.value)}
+          className="text-[13px] border border-[#E2E5EA] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#9C7C38] text-[#44546A]"
+        >
+          <option value="">Todos os status</option>
+          <option value="pronto">Pronto</option>
+          <option value="rascunho">Em rascunho</option>
+        </select>
+        {(busca || filtroPeriodo || filtroStatus) && (
+          <button
+            onClick={() => { setBusca(""); setFiltroPeriodo(""); setFiltroStatus(""); }}
+            className="text-[12px] text-[#7A8394] hover:text-[#142B4B] px-2 py-2"
+          >
+            Limpar filtros
+          </button>
+        )}
       </div>
 
       <div className="bg-white border border-[#E2E5EA] rounded-lg overflow-hidden">
