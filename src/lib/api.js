@@ -12,7 +12,10 @@ async function request(path, options = {}) {
   const res = await fetch(path, { ...options, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Erro ${res.status}`);
+    const err = new Error(body.error || `Erro ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
   }
   if (res.status === 204) return null;
   return res.json();
@@ -34,6 +37,14 @@ export const api = {
     form.append("file", file);
     return request("/api/reports/upload", { method: "POST", body: form });
   },
+
+  replaceSpreadsheet: (reportId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request(`/api/reports/${reportId}/spreadsheet`, { method: "PUT", body: form });
+  },
+
+  deleteReport: (reportId) => request(`/api/reports/${reportId}`, { method: "DELETE" }),
 
   uploadAttachment: (reportId, processoNumero, file) => {
     const form = new FormData();

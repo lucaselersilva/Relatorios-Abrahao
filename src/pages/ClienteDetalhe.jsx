@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, FilePlus2, Download, ChevronRight, CheckCircle2, Loader2,
-  Building2, Layers, Paperclip, AlertTriangle, TrendingUp, Eye,
+  Building2, Layers, Paperclip, AlertTriangle, TrendingUp, Eye, Trash2,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 
@@ -102,6 +102,17 @@ export default function ClienteDetalhe() {
     try {
       const url = await api.getDownloadUrl(reportId);
       window.open(url, "_blank");
+    } catch (e) {
+      setErro(e.message);
+    }
+  };
+
+  const handleDelete = async (reportId) => {
+    if (!window.confirm("Excluir este rascunho? A planilha e os anexos deste período serão removidos. Esta ação não pode ser desfeita.")) return;
+    setErro("");
+    try {
+      await api.deleteReport(reportId);
+      setData(await api.getClient(id));
     } catch (e) {
       setErro(e.message);
     }
@@ -293,6 +304,15 @@ export default function ClienteDetalhe() {
                     className="flex items-center gap-1 text-[12px] text-[#8A6D1F] font-medium hover:underline"
                   >
                     <ChevronRight size={13} /> Continuar
+                  </button>
+                )}
+                {v.status === "rascunho" && (
+                  <button
+                    onClick={() => handleDelete(v.id)}
+                    title="Excluir rascunho"
+                    className="flex items-center gap-1 text-[12px] text-[#A33B3B] font-medium hover:underline"
+                  >
+                    <Trash2 size={13} /> Excluir
                   </button>
                 )}
               </div>

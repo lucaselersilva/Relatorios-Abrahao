@@ -1,9 +1,11 @@
 import express from "express";
 import multer from "multer";
 
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "../lib/db.js";
 import { requireAuth } from "../lib/auth.js";
-import { uploadFile, getSignedUrl } from "../lib/storage.js";
+import { uploadFile, getSignedUrl, removeFiles } from "../lib/storage.js";
 import { parseSpreadsheet } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
 import { isPeriodoValido, periodoParaRotulo } from "../lib/periodo.js";
@@ -242,9 +244,16 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
     where: { clientId_periodo: { clientId, periodo } },
   });
   if (duplicado) {
+    // Devolve o relatório existente para a UI oferecer "substituir" ou "abrir".
+    const reportExistente = await prisma.report.findFirst({
+      where: { uploadId: duplicado.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
     return res.status(409).json({
       error: `Já existe uma planilha enviada para este cliente em ${mesReferencia}.`,
       periodo,
+      reportId: reportExistente?.id ?? null,
     });
   }
 
@@ -293,6 +302,99 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
   const versao = await prisma.report.count({ where: { clientId } });
 
   res.status(201).json({ reportId: report.id, versao, kpis, movimentacoes });
+});
+
+// ---------------------------------------------------------------------------
+// Substituir a planilha de um período já enviado (upload errado)
+// -> re-parseia, refaz o diff contra o período anterior e volta o report a
+//    rascunho (as narrativas/.docx antigos não valem mais).
+// ---------------------------------------------------------------------------
+
+app.put("/api/reports/:id/spreadsheet", requireAuth, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Arquivo da planilha é obrigatório" });
+
+  const report = await prisma.report.findUnique({
+    where: { id: req.params.id },
+    include: { upload: true },
+  });
+  if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
+
+  let processosNovos;
+  try {
+    processosNovos = await parseSpreadsheet(req.file.buffer);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const { key: novoFileKey } = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
+
+  const uploadAnterior = await findUploadAnterior(report.clientId, report.upload.periodo, report.upload.uploadedAt);
+  const movimentacoes = computeDiff(processosNovos, uploadAnterior?.processos ?? []);
+  const kpis = computeKpis(processosNovos);
+
+  // Chaves antigas a limpar do Storage depois de trocar os registros.
+  const chavesAntigas = [report.upload.fileKey, report.docxKey].filter(Boolean);
+
+  await prisma.upload.update({
+    where: { id: report.uploadId },
+    data: {
+      fileName: req.file.originalname,
+      fileKey: novoFileKey,
+      // Troca por completo a carteira daquele mês.
+      processos: { deleteMany: {}, create: processosNovos },
+    },
+  });
+
+  await prisma.report.update({
+    where: { id: report.id },
+    data: {
+      movimentacoes,
+      status: "rascunho",
+      narrativas: Prisma.DbNull,
+      docxKey: null,
+      finalizedAt: null,
+    },
+  });
+
+  await removeFiles(chavesAntigas);
+  res.json({ reportId: report.id, kpis, movimentacoes });
+});
+
+// ---------------------------------------------------------------------------
+// Excluir um relatório em rascunho (upload errado que se quer descartar)
+// -> apaga o Report (cascata nos Attachments) e, se for o único report daquele
+//    Upload, apaga o Upload e seus Processos. Arquivos correspondentes saem do
+//    Storage. Relatórios finalizados ("pronto") não podem ser excluídos.
+// ---------------------------------------------------------------------------
+
+app.delete("/api/reports/:id", requireAuth, async (req, res) => {
+  const report = await prisma.report.findUnique({
+    where: { id: req.params.id },
+    include: { attachments: true, upload: true },
+  });
+  if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
+  if (report.status === "pronto") {
+    return res.status(400).json({ error: "Não é possível excluir um relatório finalizado. Substitua a planilha do período se precisar refazê-lo." });
+  }
+
+  const reportsDoUpload = await prisma.report.count({ where: { uploadId: report.uploadId } });
+  const soReportDoUpload = reportsDoUpload === 1;
+
+  const chaves = [
+    ...report.attachments.map((a) => a.fileKey),
+    report.docxKey,
+    soReportDoUpload ? report.upload.fileKey : null,
+  ];
+
+  // Report primeiro (cascata nos Attachments); só então o Upload pode sair
+  // (a FK Report->Upload é RESTRICT).
+  await prisma.report.delete({ where: { id: report.id } });
+  if (soReportDoUpload) {
+    await prisma.upload.delete({ where: { id: report.uploadId } });
+  }
+
+  await removeFiles(chaves);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

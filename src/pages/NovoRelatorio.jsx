@@ -79,6 +79,8 @@ export default function NovoRelatorio() {
   const [clienteNomeExibicao, setClienteNomeExibicao] = useState("");
 
   const [uploading, setUploading] = useState(false);
+  const [duplicado, setDuplicado] = useState(null); // { reportId, file } quando o período já existe
+  const [substituindo, setSubstituindo] = useState(false);
   const [reportId, setReportId] = useState(resumeId || null);
   const [kpis, setKpis] = useState(null);
   const [movimentacoes, setMovimentacoes] = useState([]);
@@ -128,6 +130,7 @@ export default function NovoRelatorio() {
 
     let finalClientId = clientId;
     setErro("");
+    setDuplicado(null);
 
     try {
       if (clientId === "__new__") {
@@ -154,9 +157,33 @@ export default function NovoRelatorio() {
       setSelected(selecaoRelevante(result.movimentacoes));
       setStep(2);
     } catch (err) {
-      setErro(err.message || "Erro ao processar a planilha");
+      // Mês duplicado: oferece substituir a planilha ou abrir o relatório existente.
+      if (err.status === 409 && err.body?.reportId) {
+        setDuplicado({ reportId: err.body.reportId, file });
+      } else {
+        setErro(err.message || "Erro ao processar a planilha");
+      }
     } finally {
       setUploading(false);
+    }
+  };
+
+  const substituirPlanilha = async () => {
+    if (!duplicado) return;
+    setErro("");
+    setSubstituindo(true);
+    try {
+      const result = await api.replaceSpreadsheet(duplicado.reportId, duplicado.file);
+      setReportId(result.reportId);
+      setKpis(result.kpis);
+      setMovimentacoes(result.movimentacoes);
+      setSelected(selecaoRelevante(result.movimentacoes));
+      setDuplicado(null);
+      setStep(2);
+    } catch (err) {
+      setErro(err.message || "Erro ao substituir a planilha");
+    } finally {
+      setSubstituindo(false);
     }
   };
 
@@ -357,6 +384,43 @@ export default function NovoRelatorio() {
                 </>
               )}
             </label>
+
+            {duplicado && (
+              <div className="mt-5 bg-[#F4EEDD] border border-[#E6D9B0] rounded-xl px-5 py-4">
+                <div className="flex items-start gap-2 text-[13px] text-[#8A6D1F]">
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                  <div>
+                    Já existe uma planilha enviada para <b>{clienteNomeExibicao || "este cliente"}</b> em{" "}
+                    <b>{periodoParaRotulo(periodo)}</b>. O que você quer fazer?
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <button
+                    onClick={substituirPlanilha}
+                    disabled={substituindo}
+                    className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
+                  >
+                    {substituindo ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    Substituir planilha deste período
+                  </button>
+                  <button
+                    onClick={() => navigate(`/relatorios/${duplicado.reportId}`)}
+                    className="inline-flex items-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-white transition-colors"
+                  >
+                    <Eye size={14} /> Abrir o relatório existente
+                  </button>
+                  <button
+                    onClick={() => setDuplicado(null)}
+                    className="text-[13px] text-[#7A8394] px-3 py-2 rounded-lg hover:text-[#142B4B]"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+                <div className="text-[11px] text-[#9C844A] mt-3">
+                  Substituir troca a planilha do mês e volta o relatório para rascunho (a análise e o .docx antigos são descartados).
+                </div>
+              </div>
+            )}
           </div>
         )}
 
