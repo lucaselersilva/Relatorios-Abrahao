@@ -22,6 +22,7 @@ function Badge({ tipo }) {
     novo: { label: "Processo novo", cls: "bg-[#142B4B] text-white" },
     movimentacao: { label: "Movimentação", cls: "bg-[#EFE6D2] text-[#7A5F26]" },
     acordo: { label: "Acordo", cls: "bg-[#E4EDE7] text-[#2F5D45]" },
+    encerrado: { label: "Encerrado", cls: "bg-[#EEF0F3] text-[#44546A]" },
   };
   const m = map[tipo] ?? map.movimentacao;
   return <span className={`text-[11px] font-semibold tracking-wide px-2 py-1 rounded-full ${m.cls}`}>{m.label}</span>;

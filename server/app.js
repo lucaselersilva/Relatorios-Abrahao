@@ -26,7 +26,7 @@ async function extractPdfText(buffer) {
 
 /** Conta as movimentações de uma lista de relatórios, quebrando por tipo. */
 function resumirMovimentacoes(relatorios) {
-  const porTipo = { novo: 0, movimentacao: 0, acordo: 0 };
+  const porTipo = { novo: 0, movimentacao: 0, acordo: 0, encerrado: 0 };
   let total = 0;
   let valor = 0;
   for (const r of relatorios) {

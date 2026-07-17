@@ -16,6 +16,7 @@ const TIPO_BADGE = {
   novo: { label: "Novo", cls: "bg-[#142B4B] text-white" },
   movimentacao: { label: "Alteração", cls: "bg-[#EFE6D2] text-[#7A5F26]" },
   acordo: { label: "Acordo", cls: "bg-[#E4EDE7] text-[#2F5D45]" },
+  encerrado: { label: "Encerrado", cls: "bg-[#EEF0F3] text-[#44546A]" },
 };
 
 function money(v) {
@@ -147,7 +148,7 @@ export default function RelatorioVisualizar() {
   }, [data]);
 
   const movPorTipo = useMemo(() => {
-    const contagem = { novo: 0, movimentacao: 0, acordo: 0 };
+    const contagem = { novo: 0, movimentacao: 0, acordo: 0, encerrado: 0 };
     for (const m of data?.movimentacoes ?? []) contagem[m.tipo] = (contagem[m.tipo] ?? 0) + 1;
     return contagem;
   }, [data]);
@@ -317,6 +318,7 @@ export default function RelatorioVisualizar() {
               ["novo", "Processos novos", NAVY],
               ["movimentacao", "Alterações relevantes", GOLD],
               ["acordo", "Acordos / homologações", GREEN],
+              ["encerrado", "Encerramentos / baixas", SLATE],
             ].map(([tipo, label, color]) => (
               <div key={tipo} className="flex items-center gap-4">
                 <span className="text-[12.5px] text-[#1C2430] w-[220px] shrink-0">{label}</span>
@@ -380,7 +382,9 @@ export default function RelatorioVisualizar() {
                       <td className="px-4 py-3 text-[#44546A]">{m.area ?? "-"}</td>
                       <td className="px-4 py-3 font-semibold text-[#142B4B]">{m.valorFormatado ?? "-"}</td>
                       <td className="px-4 py-3">
-                        {m.tipo === "novo" || m.deltaValor == null ? (
+                        {m.tipo === "encerrado" ? (
+                          <span className="text-[12px] italic" style={{ color: SLATE }}>saiu da carteira</span>
+                        ) : m.tipo === "novo" || m.deltaValor == null ? (
                           m.statusAnterior && m.statusAtual && m.statusAnterior !== m.statusAtual ? (
                             <span className="text-[12px] italic" style={{ color: "#7A5F26" }}>status alterado</span>
                           ) : (
@@ -392,7 +396,9 @@ export default function RelatorioVisualizar() {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-[#44546A]">{m.statusAtual ?? "-"}</td>
+                      <td className="px-4 py-3 text-[#44546A]">
+                        {m.tipo === "encerrado" ? (m.statusAnterior ?? "Encerrado") : (m.statusAtual ?? "-")}
+                      </td>
                     </tr>
                   );
                 })}

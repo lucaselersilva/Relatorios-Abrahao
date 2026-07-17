@@ -61,7 +61,7 @@ export default function ClienteDetalhe() {
       (v) => !limite || new Date(v.createdAt) >= limite
     );
 
-    const porTipo = { novo: 0, movimentacao: 0, acordo: 0 };
+    const porTipo = { novo: 0, movimentacao: 0, acordo: 0, encerrado: 0 };
     let total = 0;
     let valor = 0;
     for (const v of versoesNoIntervalo) {
@@ -185,7 +185,7 @@ export default function ClienteDetalhe() {
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-3 mb-10">
+      <div className="grid grid-cols-6 gap-3 mb-10">
         <div className="bg-white border border-[#E2E5EA] rounded-lg px-4 py-3">
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#9AA2AF] mb-1">
             <TrendingUp size={12} /> Total
@@ -210,6 +210,12 @@ export default function ClienteDetalhe() {
           <div className="text-[10px] uppercase tracking-wide text-[#9AA2AF] mb-1">Acordos</div>
           <div className="text-[20px] font-semibold" style={{ fontFamily: "Georgia, serif", color: "#2F5D45" }}>
             {intervalo.porTipo.acordo}
+          </div>
+        </div>
+        <div className="bg-white border border-[#E2E5EA] rounded-lg px-4 py-3">
+          <div className="text-[10px] uppercase tracking-wide text-[#9AA2AF] mb-1">Encerrados</div>
+          <div className="text-[20px] font-semibold" style={{ fontFamily: "Georgia, serif", color: "#44546A" }}>
+            {intervalo.porTipo.encerrado}
           </div>
         </div>
         <div className="bg-white border border-[#E2E5EA] rounded-lg px-4 py-3 min-w-0">
