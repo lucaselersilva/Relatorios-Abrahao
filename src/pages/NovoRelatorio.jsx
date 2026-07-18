@@ -7,13 +7,9 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api.js";
 import EnviarEmailModal from "../components/EnviarEmailModal.jsx";
+import { isPeriodoValido, periodoAtual, periodoParaRotulo } from "../lib/periodo.js";
 
 const NAVY = "#142B4B";
-
-const MESES = [
-  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-];
 
 // Rótulos dos campos do sistema (espelham lib/xlsx-parser.js CAMPO_LABELS).
 const CAMPO_LABELS = {
@@ -25,15 +21,6 @@ const CAMPO_LABELS = {
   status: "Status",
   probabilidade: "Probabilidade",
 };
-
-// "2026-06" -> "Junho/2026" (rótulo de exibição). O período em si ("YYYY-MM")
-// é o que o backend usa para ordenar/comparar meses.
-function periodoParaRotulo(periodo) {
-  if (!/^\d{4}-\d{2}$/.test(periodo || "")) return periodo || "";
-  const [ano, mes] = periodo.split("-");
-  const idx = Number(mes) - 1;
-  return idx >= 0 && idx < 12 ? `${MESES[idx]}/${ano}` : periodo;
-}
 
 function fmtMoeda(n) {
   if (n == null) return "—";
@@ -278,16 +265,21 @@ export default function NovoRelatorio() {
 
   const [clients, setClients] = useState([]);
   const [clientId, setClientId] = useState(preClientId || "");
+  const [forcarSelecaoCliente, setForcarSelecaoCliente] = useState(false); // "Trocar cliente" quando veio resolvido da URL
   const [versao, setVersao] = useState(null);
   const [novoClienteNome, setNovoClienteNome] = useState("");
-  const [periodo, setPeriodo] = useState(/^\d{4}-\d{2}$/.test(prePeriodo || "") ? prePeriodo : ""); // "YYYY-MM"
+  const [periodo, setPeriodo] = useState(isPeriodoValido(prePeriodo) ? prePeriodo : periodoAtual()); // "YYYY-MM"
   const [mesReferencia, setMesReferencia] = useState(""); // rótulo de exibição
   const [clienteNomeExibicao, setClienteNomeExibicao] = useState("");
 
   const [selectedFile, setSelectedFile] = useState(null);
+  const [fileInputKey, setFileInputKey] = useState(0); // força remontar o <input type="file"> ao trocar de arquivo
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false); // arquivo escolhido, aguardando confirmação para enviar
   const [uploading, setUploading] = useState(false);
   const [duplicado, setDuplicado] = useState(null); // { reportId, file } quando o período já existe
   const [reportId, setReportId] = useState(resumeId || null);
+  const [reportStatus, setReportStatus] = useState(null); // status do report retomado ("rascunho"/"pronto"/...)
+  const [trocandoPlanilha, setTrocandoPlanilha] = useState(false); // troca inline da planilha ao retomar um rascunho (passo 1)
   const [kpis, setKpis] = useState(null);
   const [movimentacoes, setMovimentacoes] = useState([]);
   const [alertas, setAlertas] = useState([]);
@@ -317,6 +309,7 @@ export default function NovoRelatorio() {
         setClienteNomeExibicao(r.client.nome);
         setPeriodo(r.periodo ?? "");
         setMesReferencia(r.mesReferencia);
+        setReportStatus(r.status);
         setKpis(r.kpis);
         setVersao(r.versao ?? null);
         setMovimentacoes(r.movimentacoes ?? []);
@@ -397,13 +390,26 @@ export default function NovoRelatorio() {
     }
   };
 
+  // Só armazena o arquivo escolhido; o envio em si só dispara quando o usuário
+  // confirma (evita criar Upload/Report no backend por um arquivo errado).
   const onSelectFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setSelectedFile(file);
     setLeitura(null);
     setMapping({});
-    enviar(file, {});
+    setAwaitingConfirm(true);
+  };
+
+  const confirmarEnvio = () => {
+    setAwaitingConfirm(false);
+    enviar(selectedFile, {});
+  };
+
+  const trocarArquivoSelecionado = () => {
+    setSelectedFile(null);
+    setAwaitingConfirm(false);
+    setFileInputKey((k) => k + 1);
   };
 
   const substituirPlanilha = async () => {
@@ -577,98 +583,166 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 0 — cliente + período + planilha + confira a leitura */}
-        {step === 0 && !reportId && (
+        {/* STEP 0 — cliente + período + planilha + confira a leitura (unificado) */}
+        {step === 0 && (
           <div>
             <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
-              Nova versão do relatório
+              {reportId ? "Confira a leitura da planilha" : "Nova versão do relatório"}
             </h1>
             <p className="text-[13px] text-[#7A8394] mb-6">
-              Escolha o cliente e o mês, e suba a planilha de acompanhamento processual. Cada envio gera uma nova versão
-              do relatório daquele cliente, mantendo as anteriores no histórico.
+              {reportId
+                ? "Confira se o portal entendeu a planilha corretamente antes de comparar com o mês anterior. Se alguma coluna ficou de fora, mapeie e reprocesse — o ajuste vale para os próximos meses deste cliente."
+                : "Escolha o cliente e o mês, e suba a planilha de acompanhamento processual. Cada envio gera uma nova versão do relatório daquele cliente, mantendo as anteriores no histórico."}
             </p>
 
-            <label className="block text-[12px] font-medium text-[#44546A] mb-1">Cliente</label>
-            <select
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full mb-4 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38] bg-white"
-            >
-              <option value="">Selecione…</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-              <option value="__new__">+ Cadastrar novo cliente</option>
-            </select>
-
-            {clientId === "__new__" && (
+            {!reportId && (
               <>
-                <label className="block text-[12px] font-medium text-[#44546A] mb-1">Nome do novo cliente</label>
+                {preClientId && !forcarSelecaoCliente ? (
+                  <div className="mb-4 flex items-center justify-between gap-3 bg-[#F5F6F8] border border-[#E2E5EA] rounded-lg px-4 py-3">
+                    <div className="text-[13px] text-[#44546A]">
+                      Gerando relatório para{" "}
+                      <span className="font-semibold text-[#142B4B]">
+                        {clients.find((c) => c.id === clientId)?.nome ?? "…"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setForcarSelecaoCliente(true)}
+                      className="text-[12px] text-[#7A8394] hover:text-[#142B4B] hover:underline shrink-0"
+                    >
+                      Trocar cliente
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <label className="block text-[12px] font-medium text-[#44546A] mb-1">Cliente</label>
+                    <select
+                      value={clientId}
+                      onChange={(e) => setClientId(e.target.value)}
+                      className="w-full mb-4 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38] bg-white"
+                    >
+                      <option value="">Selecione…</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nome}
+                        </option>
+                      ))}
+                      <option value="__new__">+ Cadastrar novo cliente</option>
+                    </select>
+
+                    {clientId === "__new__" && (
+                      <>
+                        <label className="block text-[12px] font-medium text-[#44546A] mb-1">Nome do novo cliente</label>
+                        <input
+                          value={novoClienteNome}
+                          onChange={(e) => setNovoClienteNome(e.target.value)}
+                          className="w-full mb-4 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38]"
+                          placeholder="Ex: Construtora Alfa"
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+
+                <label className="block text-[12px] font-medium text-[#44546A] mb-1">Mês de referência</label>
                 <input
-                  value={novoClienteNome}
-                  onChange={(e) => setNovoClienteNome(e.target.value)}
-                  className="w-full mb-4 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38]"
-                  placeholder="Ex: Construtora Alfa"
+                  type="month"
+                  value={periodo}
+                  onChange={(e) => setPeriodo(e.target.value)}
+                  className="w-full mb-1.5 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38] bg-white"
                 />
+                <p className="text-[11px] text-[#9AA2AF] mb-6">
+                  {periodo ? `Aparecerá no relatório como “${periodoParaRotulo(periodo)}”.` : "Escolha o mês da carteira que esta planilha representa."}
+                </p>
+
+                <label className="block text-[12px] font-medium text-[#44546A] mb-1">Planilha</label>
+                {selectedFile && awaitingConfirm ? (
+                  <div className="border border-[#D9DCE1] rounded-xl px-6 py-6 flex items-center justify-between gap-4 bg-[#FBF8F2]">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText size={20} className="text-[#9C7C38] shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-medium text-[#1C2430] truncate">{selectedFile.name}</div>
+                        <div className="text-[11px] text-[#9AA2AF]">{(selectedFile.size / 1024).toFixed(0)} KB</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={trocarArquivoSelecionado}
+                        className="text-[12.5px] text-[#7A8394] font-medium px-3 py-2 rounded-lg hover:bg-white transition-colors"
+                      >
+                        Escolher outro
+                      </button>
+                      <button
+                        onClick={confirmarEnvio}
+                        className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors"
+                      >
+                        Confirmar e enviar <ArrowRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label
+                    className={`border-2 border-dashed rounded-xl px-8 py-10 flex flex-col items-center justify-center text-center transition-colors ${
+                      !clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())
+                        ? "border-[#E7E9ED] bg-[#FAFBFC] cursor-not-allowed opacity-60"
+                        : uploading
+                        ? "border-[#9C7C38] bg-[#FBF8F2] cursor-wait"
+                        : "border-[#D9DCE1] hover:border-[#9C7C38] hover:bg-[#FBF8F2] cursor-pointer"
+                    }`}
+                  >
+                    <input
+                      key={fileInputKey}
+                      type="file"
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                      onChange={onSelectFile}
+                      disabled={uploading || !clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())}
+                    />
+                    {uploading ? (
+                      <>
+                        <Loader2 size={28} className="animate-spin text-[#142B4B] mb-3" />
+                        <div className="text-[13px] text-[#44546A]">Lendo planilha e comparando com o mês anterior…</div>
+                      </>
+                    ) : (
+                      <>
+                        <Upload size={24} className="text-[#9AA2AF] mb-3" />
+                        <div className="text-[13px] font-medium text-[#44546A]">Clique para selecionar a planilha</div>
+                        <div className="text-[11px] text-[#9AA2AF] mt-1">.xlsx exportado do sistema jurídico</div>
+                      </>
+                    )}
+                  </label>
+                )}
               </>
             )}
 
-            <label className="block text-[12px] font-medium text-[#44546A] mb-1">Mês de referência</label>
-            <input
-              type="month"
-              value={periodo}
-              onChange={(e) => setPeriodo(e.target.value)}
-              className="w-full mb-1.5 text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38] bg-white"
-            />
-            <p className="text-[11px] text-[#9AA2AF] mb-6">
-              {periodo ? `Aparecerá no relatório como “${periodoParaRotulo(periodo)}”.` : "Escolha o mês da carteira que esta planilha representa."}
-            </p>
-
-            <label className="block text-[12px] font-medium text-[#44546A] mb-1">Planilha</label>
-            <label
-              className={`border-2 border-dashed rounded-xl px-8 py-10 flex flex-col items-center justify-center text-center transition-colors ${
-                !clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())
-                  ? "border-[#E7E9ED] bg-[#FAFBFC] cursor-not-allowed opacity-60"
-                  : uploading
-                  ? "border-[#9C7C38] bg-[#FBF8F2] cursor-wait"
-                  : "border-[#D9DCE1] hover:border-[#9C7C38] hover:bg-[#FBF8F2] cursor-pointer"
-              }`}
-            >
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={onSelectFile}
-                disabled={uploading || !clientId || !periodo || (clientId === "__new__" && !novoClienteNome.trim())}
-              />
-              {uploading ? (
-                <>
-                  <Loader2 size={28} className="animate-spin text-[#142B4B] mb-3" />
-                  <div className="text-[13px] text-[#44546A]">Lendo planilha e comparando com o mês anterior…</div>
-                </>
-              ) : (
-                <>
-                  <Upload size={24} className="text-[#9AA2AF] mb-3" />
-                  <div className="text-[13px] font-medium text-[#44546A]">Clique para selecionar a planilha</div>
-                  <div className="text-[11px] text-[#9AA2AF] mt-1">.xlsx exportado do sistema jurídico</div>
-                </>
-              )}
-            </label>
-
-            {/* Parse falhou mas há colunas para mapear: mostra a conferência/mapeador. */}
-            {leitura && !reportId && (
+            {/* Confira a leitura — sucesso (reportId já criado) ou falha (mapeamento manual necessário) */}
+            {leitura && (
               <div className="mt-5 flex flex-col gap-4">
                 <ConfiraLeitura leitura={leitura} mapping={mapping} setMapping={setMapping} />
-                <button
-                  onClick={() => enviar(selectedFile, mapping)}
-                  disabled={uploading}
-                  className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors self-start disabled:opacity-60"
-                >
-                  {uploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                  Tentar novamente com o mapeamento
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {reportId && (
+                    <button
+                      onClick={() => setStep(1)}
+                      className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
+                    >
+                      Está correto, continuar <ArrowRight size={14} />
+                    </button>
+                  )}
+                  {mapeamentoPendente && (
+                    <button
+                      onClick={() => enviar(selectedFile, mapping)}
+                      disabled={uploading}
+                      className={
+                        reportId
+                          ? "inline-flex items-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-4 py-2.5 rounded-lg hover:bg-[#F5F6F8] transition-colors disabled:opacity-60"
+                          : "inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
+                      }
+                    >
+                      {uploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                      {reportId ? "Reprocessar com o mapeamento" : "Tentar novamente com o mapeamento"}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -711,47 +785,85 @@ export default function NovoRelatorio() {
           </div>
         )}
 
-        {/* STEP 0 (continuação) — confira a leitura após upload bem-sucedido */}
-        {step === 0 && reportId && leitura && (
-          <div>
-            <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
-              Confira a leitura da planilha
-            </h1>
-            <p className="text-[13px] text-[#7A8394] mb-6">
-              Antes de comparar com o mês anterior, confira se o portal entendeu a planilha corretamente. Se alguma
-              coluna ficou de fora, mapeie e reprocesse — o ajuste vale para os próximos meses deste cliente.
-            </p>
-
-            <ConfiraLeitura leitura={leitura} mapping={mapping} setMapping={setMapping} />
-
-            <div className="flex flex-wrap items-center gap-2 mt-6">
-              <button
-                onClick={() => setStep(1)}
-                className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
-              >
-                Está correto, continuar <ArrowRight size={14} />
-              </button>
-              {mapeamentoPendente && (
-                <button
-                  onClick={() => enviar(selectedFile, mapping)}
-                  disabled={uploading}
-                  className="inline-flex items-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[13px] font-medium px-4 py-2.5 rounded-lg hover:bg-[#F5F6F8] transition-colors disabled:opacity-60"
-                >
-                  {uploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                  Reprocessar com o mapeamento
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* STEP 1 — o que mudou */}
         {step === 1 && kpis && (
           <div>
-            <h1 className="text-[20px] font-semibold mb-1" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
-              O que mudou
-            </h1>
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <h1 className="text-[20px] font-semibold" style={{ fontFamily: "Georgia, serif", color: NAVY }}>
+                O que mudou
+              </h1>
+              {resumeId && reportStatus === "rascunho" && !trocandoPlanilha && (
+                <button
+                  onClick={() => setTrocandoPlanilha(true)}
+                  className="shrink-0 inline-flex items-center gap-1.5 text-[12px] text-[#8A6D1F] font-medium hover:underline"
+                >
+                  <RefreshCw size={12} /> Trocar planilha deste período
+                </button>
+              )}
+            </div>
             <p className="text-[13px] text-[#7A8394] mb-6">Detectado automaticamente comparando processo a processo com o mês anterior.</p>
+
+            {trocandoPlanilha && (
+              <div className="mb-6 border border-[#E6D9B0] bg-[#FBF8F2] rounded-xl px-5 py-4">
+                <div className="text-[13px] font-medium text-[#8A6D1F] mb-2">Nova planilha para {mesReferencia}</div>
+                <p className="text-[11px] text-[#9C844A] mb-3">
+                  Substitui a planilha deste período e refaz a comparação com o mês anterior. A análise de IA e o
+                  relatório finalizado anteriores (se houver) são descartados.
+                </p>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  disabled={uploading}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setSelectedFile(file);
+                    setMapping({});
+                    enviar(file, {});
+                  }}
+                  className="text-[12.5px] mb-2"
+                />
+                {uploading && (
+                  <div className="flex items-center gap-1.5 text-[12px] text-[#8A6D1F] mb-2">
+                    <Loader2 size={12} className="animate-spin" /> Substituindo planilha…
+                  </div>
+                )}
+                {leitura && (
+                  <div className="flex flex-col gap-3 mt-2">
+                    <ConfiraLeitura leitura={leitura} mapping={mapping} setMapping={setMapping} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setTrocandoPlanilha(false);
+                          setLeitura(null);
+                        }}
+                        className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[12.5px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors"
+                      >
+                        Concluído
+                      </button>
+                      {mapeamentoPendente && (
+                        <button
+                          onClick={() => enviar(selectedFile, mapping)}
+                          disabled={uploading}
+                          className="inline-flex items-center gap-2 border border-[#D9DCE1] text-[#142B4B] text-[12.5px] font-medium px-3 py-2 rounded-lg hover:bg-white transition-colors disabled:opacity-60"
+                        >
+                          {uploading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                          Reprocessar com o mapeamento
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!leitura && (
+                  <button
+                    onClick={() => setTrocandoPlanilha(false)}
+                    className="text-[11.5px] text-[#9AA2AF] hover:text-[#142B4B]"
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-4 gap-3 mb-8">
               {[

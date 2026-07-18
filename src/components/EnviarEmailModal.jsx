@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, Mail, Loader2, Send, CheckCircle2, AlertTriangle, Star } from "lucide-react";
+import { X, Mail, Loader2, Send, CheckCircle2, AlertTriangle, Star, Plus } from "lucide-react";
 import { api } from "../lib/api.js";
 
 // Modal "Enviar ao cliente": escolhe contato(s) do cliente e dispara o envio.
@@ -12,6 +12,10 @@ export default function EnviarEmailModal({ reportId, clientId, contacts: contact
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
   const [resultado, setResultado] = useState(null);
+  // Cadastro inline do primeiro contato — evita fechar o modal para ir cadastrar
+  // na página do cliente quando o usuário só descobre a falta de contato aqui.
+  const [novoContato, setNovoContato] = useState({ nome: "", email: "" });
+  const [salvandoContato, setSalvandoContato] = useState(false);
 
   useEffect(() => {
     if (contactsProp) {
@@ -36,6 +40,26 @@ export default function EnviarEmailModal({ reportId, clientId, contacts: contact
 
   const toggle = (id) => setSelected((s) => ({ ...s, [id]: !s[id] }));
   const selecionados = (contacts ?? []).filter((c) => selected[c.id]);
+
+  const handleAddContact = async (e) => {
+    e.preventDefault();
+    setErro("");
+    if (!novoContato.nome.trim() || !novoContato.email.trim()) {
+      setErro("Preencha nome e e-mail.");
+      return;
+    }
+    setSalvandoContato(true);
+    try {
+      const criado = await api.addContact(clientId, { ...novoContato, principal: true });
+      setContacts((c) => [...(c ?? []), criado]);
+      setSelected((s) => ({ ...s, [criado.id]: true }));
+      setNovoContato({ nome: "", email: "" });
+    } catch (err) {
+      setErro(err.message || "Erro ao cadastrar contato");
+    } finally {
+      setSalvandoContato(false);
+    }
+  };
 
   const handleEnviar = async () => {
     setErro("");
@@ -115,9 +139,39 @@ export default function EnviarEmailModal({ reportId, clientId, contacts: contact
               <Loader2 size={15} className="animate-spin" /> Carregando contatos…
             </div>
           ) : contacts.length === 0 ? (
-            <div className="text-[13px] text-[#7A8394] py-2">
-              Este cliente não tem contatos cadastrados. Cadastre ao menos um contato na página do cliente para poder
-              enviar o relatório.
+            <div className="flex flex-col gap-3">
+              <div className="text-[13px] text-[#7A8394]">
+                Este cliente não tem contatos cadastrados{clientId ? ". Cadastre o primeiro abaixo para poder enviar:" : ". Cadastre ao menos um contato na página do cliente para poder enviar o relatório."}
+              </div>
+              {clientId && (
+                <form onSubmit={handleAddContact} className="flex flex-col gap-2">
+                  <input
+                    value={novoContato.nome}
+                    onChange={(e) => setNovoContato((v) => ({ ...v, nome: e.target.value }))}
+                    placeholder="Nome do contato"
+                    className="text-[13px] px-3 py-2 rounded-lg border border-[#D9DCE1] focus:outline-none focus:border-[#142B4B]"
+                  />
+                  <input
+                    value={novoContato.email}
+                    onChange={(e) => setNovoContato((v) => ({ ...v, email: e.target.value }))}
+                    placeholder="email@empresa.com"
+                    type="email"
+                    className="text-[13px] px-3 py-2 rounded-lg border border-[#D9DCE1] focus:outline-none focus:border-[#142B4B]"
+                  />
+                  {erro && (
+                    <div className="flex items-center gap-2 text-[12px] text-[#A33B3B]">
+                      <AlertTriangle size={13} /> {erro}
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={salvandoContato}
+                    className="flex items-center justify-center gap-1.5 bg-[#142B4B] text-white text-[12.5px] font-medium px-3 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors disabled:opacity-60"
+                  >
+                    {salvandoContato ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Cadastrar e continuar
+                  </button>
+                </form>
+              )}
             </div>
           ) : (
             <>

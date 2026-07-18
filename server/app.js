@@ -15,7 +15,7 @@ import { emailProvider, sendEmail } from "../lib/email.js";
 import { parseSpreadsheet, normalizeMapping, CAMPOS_SISTEMA } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
 import { computeAlertas } from "../lib/alertas.js";
-import { isPeriodoValido, periodoParaRotulo, periodoAtual } from "../lib/periodo.js";
+import { isPeriodoValido, periodoParaRotulo, periodoAtual, periodoSeguinte } from "../lib/periodo.js";
 import { gerarAnaliseIA, regenerarDestaque } from "../lib/ai.js";
 import { normalizeNarrativas } from "../lib/narrativas.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
@@ -128,6 +128,24 @@ async function extractDocxText(buffer) {
 
 const isPdfFileName = (name) => path.extname(name || "").toLowerCase() === ".pdf";
 const isDocxFileName = (name) => path.extname(name || "").toLowerCase() === ".docx";
+
+/**
+ * Aviso amigável quando um anexo não vai (ou vai só parcialmente) para a IA:
+ * PDF escaneado (lido por visão, ou pulado se grande demais) ou .doc antigo
+ * (sem extração de texto). null quando o anexo é lido normalmente.
+ */
+function attachmentAviso(fileName, extractedText, sizeBytes) {
+  const ext = path.extname(fileName || "").toLowerCase();
+  if (isPdfFileName(fileName) && !extractedText) {
+    return sizeBytes > VISION_PDF_MAX_BYTES
+      ? "PDF sem texto e acima de 5 MB: não será enviado à IA. Reduza o arquivo para que ele seja analisado por visão."
+      : "PDF sem texto extraível — será lido pela IA por visão (imagem).";
+  }
+  if (ext === ".doc") {
+    return "Arquivos .doc antigos não têm o texto lido pela IA. Converta para .docx ou PDF para incluí-lo na análise.";
+  }
+  return null;
+}
 
 /** Conta as movimentações de uma lista de relatórios, quebrando por tipo. */
 function resumirMovimentacoes(relatorios) {
@@ -462,11 +480,18 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
     };
   });
 
+  // Sugestão de próximo período para pré-preencher o wizard: mês seguinte ao
+  // último período com upload, ou o mês corrente se o cliente ainda não tem nenhum.
+  const proximoPeriodoSugerido = evolucao.length
+    ? periodoSeguinte(evolucao[evolucao.length - 1].periodo)
+    : periodoAtual();
+
   res.json({
     client: { id: client.id, nome: client.nome, createdAt: client.createdAt },
     kpisAtuais,
     contacts,
     evolucao,
+    proximoPeriodoSugerido,
     versoes: [...versoes].reverse(), // mais recente primeiro para exibição
   });
 });
@@ -916,16 +941,7 @@ app.post("/api/reports/:id/attachments", requireAuth, upload.single("file"), asy
   else if (isDocxFileName(req.file.originalname)) extractedText = await extractDocxText(req.file.buffer);
 
   // Aviso claro na UI quando o anexo não vai (ou vai só parcialmente) para a IA.
-  let aviso = null;
-  if (isPdfFileName(req.file.originalname) && !extractedText) {
-    // PDF escaneado (sem texto): será lido por visão, salvo se for grande demais.
-    aviso =
-      req.file.size > VISION_PDF_MAX_BYTES
-        ? "PDF sem texto e acima de 5 MB: não será enviado à IA. Reduza o arquivo para que ele seja analisado por visão."
-        : "PDF sem texto extraível — será lido pela IA por visão (imagem).";
-  } else if (ext === ".doc") {
-    aviso = "Arquivos .doc antigos não têm o texto lido pela IA. Converta para .docx ou PDF para incluí-lo na análise.";
-  }
+  const aviso = attachmentAviso(req.file.originalname, extractedText, req.file.size);
 
   const attachment = await prisma.attachment.create({
     data: {
@@ -971,26 +987,59 @@ app.delete("/api/reports/:id/attachments/:attachmentId", requireAuth, async (req
  * (base64) para leitura por visão, respeitando VISION_PDF_MAX_BYTES.
  * `report` precisa incluir `client` e `attachments`.
  */
+const DOCUMENTO_TEXTO_MAX_CHARS = 6000;
+
 async function buildAnalysisContext(report) {
   const processos = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
   const kpis = computeKpis(processos);
   const panorama = computePanorama(processos);
 
+  // KPIs do mês anterior — sem isso a IA só tem o diff por processo (movimentacoes)
+  // para inferir a evolução agregada, o que ignora processos que não mudaram.
+  const uploadAnterior = await findUploadAnterior(report.clientId, report.periodo, report.upload?.uploadedAt);
+  const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
+
   const documentosTexto = report.attachments
     .filter((a) => a.extractedText)
-    .map((a) => ({ processoNumero: a.processoNumero, fileName: a.fileName, texto: a.extractedText.slice(0, 6000) }));
+    .map((a) => ({
+      processoNumero: a.processoNumero,
+      fileName: a.fileName,
+      texto: a.extractedText.slice(0, DOCUMENTO_TEXTO_MAX_CHARS),
+      truncado: a.extractedText.length > DOCUMENTO_TEXTO_MAX_CHARS,
+    }));
 
   // PDFs escaneados (sem texto): baixa do Storage e envia como documento por
-  // visão, pulando os que passam do limite de tamanho (já avisado no upload).
+  // visão, pulando os que passam do limite de tamanho. Anexos que não entram de
+  // forma alguma (PDF grande, .docx sem extração, .doc, imagem) vão para
+  // `documentosPulados` — a IA precisa saber que não pode afirmar fatos sobre
+  // eles, em vez de simplesmente não vê-los.
   const documentosPdf = [];
+  const documentosPulados = [];
   for (const a of report.attachments) {
-    if (a.extractedText || !isPdfFileName(a.fileName)) continue;
-    try {
-      const buffer = await downloadFile(a.fileKey);
-      if (buffer.length > VISION_PDF_MAX_BYTES) continue;
-      documentosPdf.push({ processoNumero: a.processoNumero, fileName: a.fileName, base64: Buffer.from(buffer).toString("base64") });
-    } catch (err) {
-      console.error("Falha ao baixar anexo para visão:", a.fileKey, err);
+    if (a.extractedText) continue;
+
+    if (isPdfFileName(a.fileName)) {
+      try {
+        const buffer = await downloadFile(a.fileKey);
+        if (buffer.length > VISION_PDF_MAX_BYTES) {
+          documentosPulados.push({ processoNumero: a.processoNumero, fileName: a.fileName, motivo: "PDF sem texto acima de 5 MB — não enviado à IA" });
+          continue;
+        }
+        documentosPdf.push({ processoNumero: a.processoNumero, fileName: a.fileName, base64: Buffer.from(buffer).toString("base64") });
+      } catch (err) {
+        console.error("Falha ao baixar anexo para visão:", a.fileKey, err);
+        documentosPulados.push({ processoNumero: a.processoNumero, fileName: a.fileName, motivo: "Falha ao carregar o arquivo" });
+      }
+      continue;
+    }
+
+    const ext = path.extname(a.fileName || "").toLowerCase();
+    if (ext === ".docx") {
+      documentosPulados.push({ processoNumero: a.processoNumero, fileName: a.fileName, motivo: "Não foi possível extrair o texto do documento" });
+    } else if (ext === ".doc") {
+      documentosPulados.push({ processoNumero: a.processoNumero, fileName: a.fileName, motivo: "Formato .doc não é lido pela IA" });
+    } else {
+      documentosPulados.push({ processoNumero: a.processoNumero, fileName: a.fileName, motivo: "Imagem não é enviada à IA nesta análise" });
     }
   }
 
@@ -998,10 +1047,13 @@ async function buildAnalysisContext(report) {
     cliente: report.client.nome,
     mesReferencia: report.mesReferencia,
     kpis,
+    kpisAnterior,
     panorama,
     movimentacoes: report.movimentacoes,
+    alertas: report.alertas ?? [],
     documentosTexto,
     documentosPdf,
+    documentosPulados,
   };
 }
 
@@ -1057,11 +1109,12 @@ app.post("/api/reports/:id/regenerate-destaque", requireAuth, async (req, res) =
 
   // Só o texto extraído entra aqui (não reenviamos PDFs por visão numa chamada
   // barata de um único item) — mantém custo/latência baixos.
-  const { cliente, mesReferencia, kpis, panorama, movimentacoes, documentosTexto } = await buildAnalysisContext(report);
+  const { cliente, mesReferencia, kpis, kpisAnterior, panorama, movimentacoes, documentosTexto } = await buildAnalysisContext(report);
   const destaque = await regenerarDestaque({
     cliente,
     mesReferencia,
     kpis,
+    kpisAnterior,
     panorama,
     movimentacoes,
     documentosTexto,

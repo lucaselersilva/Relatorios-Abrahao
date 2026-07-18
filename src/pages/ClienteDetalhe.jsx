@@ -158,6 +158,9 @@ export default function ClienteDetalhe() {
   }
 
   const { client, kpisAtuais, versoes } = data;
+  const novoRelatorioHref = `/relatorios/novo?clientId=${client.id}${
+    data.proximoPeriodoSugerido ? `&periodo=${data.proximoPeriodoSugerido}` : ""
+  }`;
 
   const handleDownload = async (reportId) => {
     try {
@@ -212,7 +215,7 @@ export default function ClienteDetalhe() {
           </div>
         </div>
         <button
-          onClick={() => navigate(`/relatorios/novo?clientId=${client.id}`)}
+          onClick={() => navigate(novoRelatorioHref)}
           className="flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors"
         >
           <FilePlus2 size={14} /> Nova versão do relatório
@@ -411,7 +414,7 @@ export default function ClienteDetalhe() {
           Nenhum relatório gerado para este cliente ainda.
           <div className="mt-3">
             <button
-              onClick={() => navigate(`/relatorios/novo?clientId=${client.id}`)}
+              onClick={() => navigate(novoRelatorioHref)}
               className="inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1c3a63] transition-colors"
             >
               <FilePlus2 size={14} /> Gerar primeiro relatório
@@ -517,6 +520,7 @@ export default function ClienteDetalhe() {
       {enviarPara && (
         <EnviarEmailModal
           reportId={enviarPara}
+          clientId={client.id}
           contacts={contacts}
           onClose={() => setEnviarPara(null)}
           onSent={reloadData}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { isPeriodoValido, periodoParaRotulo } from "../lib/periodo.js";
+import { isPeriodoValido, periodoParaRotulo, periodoSeguinte } from "../lib/periodo.js";
 
 describe("isPeriodoValido", () => {
   it("aceita 'YYYY-MM' com mês entre 01 e 12", () => {
@@ -28,5 +28,19 @@ describe("periodoParaRotulo", () => {
 
   it("devolve o próprio valor quando não é um período válido", () => {
     expect(periodoParaRotulo("qualquer coisa")).toBe("qualquer coisa");
+  });
+});
+
+describe("periodoSeguinte", () => {
+  it("soma 1 mês dentro do mesmo ano", () => {
+    expect(periodoSeguinte("2026-06")).toBe("2026-07");
+  });
+
+  it("trata a virada de ano", () => {
+    expect(periodoSeguinte("2026-12")).toBe("2027-01");
+  });
+
+  it("devolve o próprio valor quando não é um período válido", () => {
+    expect(periodoSeguinte("qualquer coisa")).toBe("qualquer coisa");
   });
 });

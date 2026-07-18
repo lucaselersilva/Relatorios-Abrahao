@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { computeAlertas } from "../lib/alertas.js";
+import { computeAlertas, pct } from "../lib/alertas.js";
 
 const kpis = (over = {}) => ({ processos: 3, valorEnvolvidoNum: 3_000_000, provisaoNum: 800_000, valorEnvolvido: "R$ 3.000.000,00", provisao: "R$ 800.000,00", semProvisao: 0, ...over });
 
@@ -45,5 +45,18 @@ describe("computeAlertas", () => {
     const movs = [{ tipo: "encerrado", numero: "9", parte: "Empresa X", valor: 2_000_000, statusAnterior: "Distribuído" }];
     const alerta = computeAlertas({ movimentacoes: movs, kpis: kpis(), kpisAnterior: null }).find((a) => a.tipo === "sumico_sem_encerramento");
     expect(alerta.severidade).toBe("alta");
+  });
+});
+
+describe("pct", () => {
+  it("calcula a variação percentual entre dois valores", () => {
+    expect(pct(120, 100)).toBeCloseTo(20);
+    expect(pct(70, 100)).toBeCloseTo(-30);
+  });
+
+  it("devolve null quando falta um dos valores ou o anterior é zero", () => {
+    expect(pct(null, 100)).toBeNull();
+    expect(pct(100, null)).toBeNull();
+    expect(pct(100, 0)).toBeNull();
   });
 });
