@@ -124,6 +124,13 @@ export default function Dashboard() {
             </div>
           )}
 
+          {resumo.alertas > 0 && (
+            <div className="flex items-center gap-2 text-[12px] text-[#A33B3B] bg-[#FBEAEA] border border-[#E9C6C6] rounded-lg px-4 py-2.5 mb-4">
+              <AlertTriangle size={14} />
+              {resumo.alertas} alerta(s) automático(s) nos relatórios deste mês. Revise antes de enviar ao cliente.
+            </div>
+          )}
+
           <div className="bg-white border border-[#E2E5EA] rounded-lg overflow-hidden">
             <table className="w-full text-left">
               <thead>
@@ -144,7 +151,17 @@ export default function Dashboard() {
                         </button>
                       </td>
                       <td className="px-5 py-3.5">
-                        <StatusChip status={c.status} />
+                        <div className="flex items-center gap-2">
+                          <StatusChip status={c.status} />
+                          {c.totalAlertas > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#A33B3B] bg-[#FBEAEA] px-2 py-0.5 rounded-full"
+                              title={`${c.totalAlertas} alerta(s) automático(s)`}
+                            >
+                              <AlertTriangle size={10} /> {c.totalAlertas}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <button

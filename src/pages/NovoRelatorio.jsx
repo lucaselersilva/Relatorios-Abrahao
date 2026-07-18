@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Upload, CheckCircle2, ArrowRight, Sparkles, FileText, Paperclip, X, Download,
   AlertTriangle, ChevronRight, Scale, Building2, Gavel, Loader2, History, Eye,
-  RefreshCw, Table2, Mail,
+  RefreshCw, Table2, Mail, Wand2, Bell,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 import EnviarEmailModal from "../components/EnviarEmailModal.jsx";
@@ -41,6 +41,54 @@ function fmtMoeda(n) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Shape canônico da análise da IA (ver lib/narrativas.js).
+const EMPTY_NARRATIVAS = { sumarioExecutivo: "", destaques: [], pontosDeAtencao: [] };
+
+function normNarrativas(raw) {
+  if (!raw) return EMPTY_NARRATIVAS;
+  if (Array.isArray(raw)) return { sumarioExecutivo: "", destaques: raw, pontosDeAtencao: [] };
+  return {
+    sumarioExecutivo: typeof raw.sumarioExecutivo === "string" ? raw.sumarioExecutivo : "",
+    destaques: Array.isArray(raw.destaques) ? raw.destaques : [],
+    pontosDeAtencao: Array.isArray(raw.pontosDeAtencao) ? raw.pontosDeAtencao : [],
+  };
+}
+
+// Cor do cartão de ponto de atenção / alerta por severidade.
+const SEVERIDADE_STYLE = {
+  alta: { rotulo: "Alta", faixa: "#A33B3B", bg: "#FBEAEA", texto: "#A33B3B" },
+  media: { rotulo: "Média", faixa: "#9C7C38", bg: "#FBF8F2", texto: "#7A5F26" },
+  baixa: { rotulo: "Baixa", faixa: "#7A8394", bg: "#F4F6F8", texto: "#44546A" },
+};
+
+// Painel de alertas determinísticos (F13) — exibido em "O que mudou".
+function AlertasPanel({ alertas }) {
+  if (!alertas?.length) return null;
+  return (
+    <div className="mb-6 border border-[#E9C6C6] rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-[#FBEAEA] text-[#A33B3B] text-[12px] font-semibold">
+        <Bell size={14} /> {alertas.length} alerta(s) automático(s) neste mês
+      </div>
+      <div className="flex flex-col divide-y divide-[#F0E3E3] bg-white">
+        {alertas.map((a, i) => {
+          const sev = SEVERIDADE_STYLE[a.severidade] ?? SEVERIDADE_STYLE.media;
+          return (
+            <div key={i} className="px-4 py-3 flex items-start gap-3">
+              <span className="mt-0.5 text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: sev.texto, backgroundColor: sev.bg }}>
+                {sev.rotulo}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium text-[#1C2430]">{a.titulo}</div>
+                <div className="text-[12px] text-[#7A8394] mt-0.5">{a.texto}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // Cliente + Upload viram uma única etapa ("Planilha"); a conferência da leitura
 // é uma sub-etapa dela, então o wizard tem 5 passos.
@@ -92,7 +140,7 @@ async function aguardarAnalise(reportId, { intervalMs = 2500, timeoutMs = 15 * 6
   while (Date.now() - inicio < timeoutMs) {
     const r = await api.getReport(reportId);
     if (r.status === "erro") throw new Error("A análise da IA falhou. Tente rodar novamente.");
-    if (r.status !== "analisando") return r.narrativas ?? [];
+    if (r.status !== "analisando") return normNarrativas(r.narrativas);
     await sleep(intervalMs);
   }
   throw new Error("A análise está demorando mais que o esperado. Recarregue a página e verifique o relatório.");
@@ -242,13 +290,16 @@ export default function NovoRelatorio() {
   const [reportId, setReportId] = useState(resumeId || null);
   const [kpis, setKpis] = useState(null);
   const [movimentacoes, setMovimentacoes] = useState([]);
+  const [alertas, setAlertas] = useState([]);
   const [selected, setSelected] = useState({});
   const [leitura, setLeitura] = useState(null); // conferência da leitura da planilha
   const [mapping, setMapping] = useState({}); // mapeamento manual { campo: nomeColuna }
 
-  const [attachments, setAttachments] = useState({}); // numero -> [{id, fileName}]
+  const [attachments, setAttachments] = useState({}); // numero -> [{id, fileName, aviso?}]
   const [analyzing, setAnalyzing] = useState(false);
-  const [narrativas, setNarrativas] = useState([]);
+  const [narrativas, setNarrativas] = useState(EMPTY_NARRATIVAS); // { sumarioExecutivo, destaques, pontosDeAtencao }
+  const [instrucao, setInstrucao] = useState(""); // instruções livres para a IA (F12)
+  const [regenIndex, setRegenIndex] = useState(null); // índice do destaque em regeneração
   const [finalizando, setFinalizando] = useState(false);
   const [reportFinal, setReportFinal] = useState(null);
   const [enviarOpen, setEnviarOpen] = useState(false);
@@ -269,6 +320,7 @@ export default function NovoRelatorio() {
         setKpis(r.kpis);
         setVersao(r.versao ?? null);
         setMovimentacoes(r.movimentacoes ?? []);
+        setAlertas(r.alertas ?? []);
         const attByNumero = {};
         for (const a of r.attachments) {
           attByNumero[a.processoNumero] = [...(attByNumero[a.processoNumero] ?? []), a];
@@ -276,7 +328,7 @@ export default function NovoRelatorio() {
         setAttachments(attByNumero);
         // Mantém marcadas as relevantes + qualquer uma que já tenha documento anexado.
         setSelected({ ...selecaoRelevante(r.movimentacoes ?? []), ...Object.fromEntries(Object.keys(attByNumero).map((n) => [n, true])) });
-        if (r.narrativas) setNarrativas(r.narrativas);
+        setNarrativas(normNarrativas(r.narrativas));
         setStep(1); // vai direto para "O que mudou"
       })
       .catch((err) => setErro(err.message))
@@ -298,6 +350,7 @@ export default function NovoRelatorio() {
         const result = await api.replaceSpreadsheet(reportId, file, mappingArg);
         setKpis(result.kpis);
         setMovimentacoes(result.movimentacoes);
+        setAlertas(result.alertas ?? []);
         setSelected(selecaoRelevante(result.movimentacoes));
         setLeitura(result.leitura);
         return;
@@ -325,6 +378,7 @@ export default function NovoRelatorio() {
       setKpis(result.kpis);
       setVersao(result.versao ?? null);
       setMovimentacoes(result.movimentacoes);
+      setAlertas(result.alertas ?? []);
       setSelected(selecaoRelevante(result.movimentacoes));
       setLeitura(result.leitura);
     } catch (err) {
@@ -362,6 +416,7 @@ export default function NovoRelatorio() {
       setSelectedFile(duplicado.file);
       setKpis(result.kpis);
       setMovimentacoes(result.movimentacoes);
+      setAlertas(result.alertas ?? []);
       setSelected(selecaoRelevante(result.movimentacoes));
       setLeitura(result.leitura);
       setDuplicado(null);
@@ -377,6 +432,7 @@ export default function NovoRelatorio() {
   const handleAttachFile = async (numero, file) => {
     if (!file) return;
     try {
+      // A resposta traz `aviso` quando o anexo não vai (ou vai só por visão) à IA.
       const attachment = await api.uploadAttachment(reportId, numero, file);
       setAttachments((a) => ({ ...a, [numero]: [...(a[numero] ?? []), attachment] }));
     } catch (err) {
@@ -398,11 +454,11 @@ export default function NovoRelatorio() {
     setAnalyzing(true);
     setErro("");
     try {
-      const result = await api.analyzeReport(reportId);
+      const result = await api.analyzeReport(reportId, instrucao.trim() || undefined);
       // Backend assíncrono: responde "analisando" e roda a IA fora do request.
       // Retrocompatível: se já vierem narrativas, usa direto; senão, faz polling.
       if (result?.narrativas) {
-        setNarrativas(result.narrativas);
+        setNarrativas(normNarrativas(result.narrativas));
       } else {
         setNarrativas(await aguardarAnalise(reportId));
       }
@@ -412,6 +468,30 @@ export default function NovoRelatorio() {
       setAnalyzing(false);
     }
   };
+
+  // Regenera um destaque específico (F12), guiado pela instrução livre atual.
+  const regenerarUm = async (index) => {
+    setRegenIndex(index);
+    setErro("");
+    try {
+      const destaqueAtual = narrativas.destaques[index];
+      const outrosDestaques = narrativas.destaques.filter((_, i) => i !== index);
+      const { destaque } = await api.regenerateDestaque(reportId, {
+        destaqueAtual,
+        outrosDestaques,
+        instrucao: instrucao.trim() || undefined,
+      });
+      setNarrativas((n) => ({ ...n, destaques: n.destaques.map((d, i) => (i === index ? destaque : d)) }));
+    } catch (err) {
+      setErro(err.message || "Erro ao regenerar o destaque");
+    } finally {
+      setRegenIndex(null);
+    }
+  };
+
+  // Edita um destaque no lugar (texto ou título) mantendo o restante do shape.
+  const editarDestaque = (index, patch) =>
+    setNarrativas((n) => ({ ...n, destaques: n.destaques.map((d, i) => (i === index ? { ...d, ...patch } : d)) }));
 
   const finalizeReport = async () => {
     setFinalizando(true);
@@ -692,6 +772,8 @@ export default function NovoRelatorio() {
               ))}
             </div>
 
+            <AlertasPanel alertas={alertas} />
+
             <div className="text-[12px] font-semibold text-[#44546A] uppercase tracking-wide mb-3">
               Movimentações relevantes ({movimentacoes.length})
             </div>
@@ -784,6 +866,12 @@ export default function NovoRelatorio() {
                         ))}
                       </div>
 
+                      {(attachments[m.numero] ?? []).filter((f) => f.aviso).map((f) => (
+                        <div key={`aviso-${f.id}`} className="flex items-start gap-1.5 text-[11px] text-[#8A6D1F] mb-2">
+                          <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {f.aviso}
+                        </div>
+                      ))}
+
                       <label className="flex items-center gap-1.5 text-[12px] text-[#142B4B] font-medium hover:underline cursor-pointer w-fit">
                         <Paperclip size={13} /> Anexar documento
                         <input
@@ -798,9 +886,21 @@ export default function NovoRelatorio() {
               </div>
             )}
 
+            <div className="mt-6">
+              <label className="block text-[12px] font-medium text-[#44546A] mb-1">Instruções para a IA (opcional)</label>
+              <textarea
+                value={instrucao}
+                onChange={(e) => setInstrucao(e.target.value)}
+                rows={2}
+                placeholder="Ex.: destaque o risco trabalhista, seja mais conciso, foque nos processos acima de R$ 1 mi…"
+                className="w-full text-[13px] border border-[#D9DCE1] rounded-lg px-3 py-2.5 outline-none focus:border-[#9C7C38] resize-none"
+              />
+              <p className="text-[11px] text-[#9AA2AF] mt-1">Orienta o tom e o foco da análise. Vale também ao regenerar um destaque específico.</p>
+            </div>
+
             <button
               onClick={runAnalysis}
-              className="mt-6 inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
+              className="mt-4 inline-flex items-center gap-2 bg-[#142B4B] text-white text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#1c3a63] transition-colors"
             >
               <Sparkles size={14} /> Rodar análise da IA
             </button>
@@ -836,12 +936,37 @@ export default function NovoRelatorio() {
               </button>
             ) : (
               <div className="flex flex-col gap-4">
-                {narrativas.map((n, i) => (
+                {/* Sumário executivo */}
+                <div className="bg-white border border-[#E2E5EA] rounded-lg px-5 py-4">
+                  <div className="text-[11px] font-semibold text-[#44546A] uppercase tracking-wide mb-2">Sumário executivo</div>
+                  <textarea
+                    value={narrativas.sumarioExecutivo}
+                    onChange={(e) => setNarrativas((n) => ({ ...n, sumarioExecutivo: e.target.value }))}
+                    placeholder="Parágrafo de abertura do relatório."
+                    className="w-full text-[13px] text-[#333] leading-relaxed border-none outline-none resize-none bg-transparent"
+                    rows={3}
+                  />
+                </div>
+
+                {/* Destaques (editáveis + regenerar individual) */}
+                <div className="text-[11px] font-semibold text-[#44546A] uppercase tracking-wide mt-1">Destaques do período</div>
+                {narrativas.destaques.map((n, i) => (
                   <div key={i} className="bg-white border border-[#E2E5EA] rounded-lg px-5 py-4">
-                    <div className="text-[13px] font-semibold text-[#142B4B] mb-2">{n.titulo}</div>
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="text-[13px] font-semibold text-[#142B4B]">{n.titulo}</div>
+                      <button
+                        onClick={() => regenerarUm(i)}
+                        disabled={regenIndex !== null}
+                        title="Regenerar este destaque com a IA"
+                        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#8A6D1F] border border-[#E6D9B0] px-2.5 py-1 rounded-md hover:bg-[#FBF8F2] transition-colors disabled:opacity-50 shrink-0"
+                      >
+                        {regenIndex === i ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                        Regenerar
+                      </button>
+                    </div>
                     <textarea
                       value={n.texto}
-                      onChange={(e) => setNarrativas((arr) => arr.map((t, idx) => (idx === i ? { ...t, texto: e.target.value } : t)))}
+                      onChange={(e) => editarDestaque(i, { texto: e.target.value })}
                       className="w-full text-[13px] text-[#333] leading-relaxed border-none outline-none resize-none bg-transparent"
                       rows={3}
                     />
@@ -850,6 +975,32 @@ export default function NovoRelatorio() {
                     </div>
                   </div>
                 ))}
+
+                {/* Pontos de atenção */}
+                {narrativas.pontosDeAtencao.length > 0 && (
+                  <>
+                    <div className="text-[11px] font-semibold text-[#44546A] uppercase tracking-wide mt-1">Pontos de atenção</div>
+                    {narrativas.pontosDeAtencao.map((p, i) => {
+                      const sev = SEVERIDADE_STYLE[p.severidade] ?? SEVERIDADE_STYLE.media;
+                      return (
+                        <div key={i} className="rounded-lg px-5 py-4 border-l-[3px]" style={{ borderColor: sev.faixa, backgroundColor: sev.bg }}>
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ color: sev.texto, backgroundColor: "#FFFFFF" }}>
+                              Severidade {sev.rotulo.toLowerCase()}
+                            </span>
+                            <span className="text-[13px] font-semibold text-[#142B4B]">{p.titulo}</span>
+                          </div>
+                          <textarea
+                            value={p.texto}
+                            onChange={(e) => setNarrativas((n) => ({ ...n, pontosDeAtencao: n.pontosDeAtencao.map((x, idx) => (idx === i ? { ...x, texto: e.target.value } : x)) }))}
+                            className="w-full text-[13px] text-[#2A3140] leading-relaxed border-none outline-none resize-none bg-transparent"
+                            rows={2}
+                          />
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
 
                 <button
                   onClick={finalizeReport}
@@ -887,7 +1038,7 @@ export default function NovoRelatorio() {
                   <CheckCircle2 size={15} className="text-[#3F6B4F]" /> Sumário executivo com KPIs do mês
                 </div>
                 <div className="flex items-center gap-2 text-[13px] text-[#44546A]">
-                  <CheckCircle2 size={15} className="text-[#3F6B4F]" /> Análise do período ({narrativas.length} destaques revisados)
+                  <CheckCircle2 size={15} className="text-[#3F6B4F]" /> Análise do período ({narrativas.destaques.length} destaques revisados)
                 </div>
                 <div className="flex items-center gap-2 text-[13px] text-[#44546A]">
                   <CheckCircle2 size={15} className="text-[#3F6B4F]" /> Panorama da carteira + maiores exposições

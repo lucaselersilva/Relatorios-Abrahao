@@ -21,6 +21,24 @@ const TIPO_BADGE = {
   encerrado: { label: "Encerrado", cls: "bg-[#EEF0F3] text-[#44546A]" },
 };
 
+// Estilo do cartão de ponto de atenção por severidade (mesmo vocabulário do .docx/PDF).
+const SEVERIDADE_STYLE = {
+  alta: { rotulo: "Severidade alta", faixa: RED, bg: "#FBEAEA", texto: RED },
+  media: { rotulo: "Severidade média", faixa: GOLD, bg: "#FBF8F2", texto: "#7A5F26" },
+  baixa: { rotulo: "Severidade baixa", faixa: SLATE, bg: "#F4F6F8", texto: "#44546A" },
+};
+
+// Aceita o shape novo (objeto) e o legado (array de destaques).
+function normNarrativas(raw) {
+  if (!raw) return { sumarioExecutivo: "", destaques: [], pontosDeAtencao: [] };
+  if (Array.isArray(raw)) return { sumarioExecutivo: "", destaques: raw, pontosDeAtencao: [] };
+  return {
+    sumarioExecutivo: typeof raw.sumarioExecutivo === "string" ? raw.sumarioExecutivo : "",
+    destaques: Array.isArray(raw.destaques) ? raw.destaques : [],
+    pontosDeAtencao: Array.isArray(raw.pontosDeAtencao) ? raw.pontosDeAtencao : [],
+  };
+}
+
 function money(v) {
   if (v == null) return "—";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -148,7 +166,8 @@ export default function ReportView({ data }) {
 
   if (!data) return null;
 
-  const { client, mesReferencia, versao, status, kpis, kpisAnterior, movimentacoes = [], narrativas = [] } = data;
+  const { client, mesReferencia, versao, status, kpis, kpisAnterior, movimentacoes = [] } = data;
+  const { sumarioExecutivo, destaques, pontosDeAtencao } = normNarrativas(data.narrativas);
   const attachmentsCount = data.attachmentsCount ?? data.attachments?.length ?? 0;
   const maxTop = panoramaView?.topExposicoes?.[0]?.valor || 0;
   const maxMov = Math.max(1, ...Object.values(movPorTipo));
@@ -178,6 +197,16 @@ export default function ReportView({ data }) {
           </div>
         </div>
       </div>
+
+      {/* Sumário executivo */}
+      {sumarioExecutivo?.trim() && (
+        <>
+          <SectionTitle text="Sumário executivo" />
+          <p className="text-[14px] text-[#2A3140] leading-relaxed mb-8" style={{ fontFamily: "Georgia, serif" }}>
+            {sumarioExecutivo}
+          </p>
+        </>
+      )}
 
       {/* KPIs */}
       {kpis && (
@@ -272,17 +301,38 @@ export default function ReportView({ data }) {
       )}
 
       {/* Destaques da IA */}
-      {narrativas.length > 0 && (
+      {destaques.length > 0 && (
         <>
           <SectionTitle text="Destaques do período" />
           <div className="flex flex-col gap-3 mb-9">
-            {narrativas.map((n, i) => (
+            {destaques.map((n, i) => (
               <div key={i} className="bg-[#FBFAF7] rounded-md px-5 py-4 border-l-[3px]" style={{ borderColor: GOLD }}>
                 <div className="text-[14px] font-semibold text-[#142B4B] mb-1.5">{n.titulo}</div>
                 <div className="text-[13px] text-[#2A3140] leading-relaxed mb-2">{n.texto}</div>
                 <div className="text-[10px] uppercase tracking-wide text-[#9AA2AF]">Fonte — {n.fonte}</div>
               </div>
             ))}
+          </div>
+        </>
+      )}
+
+      {/* Pontos de atenção */}
+      {pontosDeAtencao.length > 0 && (
+        <>
+          <SectionTitle text="Pontos de atenção" />
+          <div className="flex flex-col gap-3 mb-9">
+            {pontosDeAtencao.map((p, i) => {
+              const sev = SEVERIDADE_STYLE[p.severidade] ?? SEVERIDADE_STYLE.media;
+              return (
+                <div key={i} className="rounded-md px-5 py-4 border-l-[3px]" style={{ borderColor: sev.faixa, backgroundColor: sev.bg }}>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: sev.texto }}>
+                    {sev.rotulo}
+                  </div>
+                  <div className="text-[14px] font-semibold text-[#142B4B] mb-1.5">{p.titulo}</div>
+                  <div className="text-[13px] text-[#2A3140] leading-relaxed">{p.texto}</div>
+                </div>
+              );
+            })}
           </div>
         </>
       )}

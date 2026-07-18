@@ -14,8 +14,10 @@ import { uploadFile, getSignedUrl, removeFiles, downloadFile } from "../lib/stor
 import { emailProvider, sendEmail } from "../lib/email.js";
 import { parseSpreadsheet, normalizeMapping, CAMPOS_SISTEMA } from "../lib/xlsx-parser.js";
 import { computeDiff, computeKpis, computePanorama, formatMoeda } from "../lib/diff.js";
+import { computeAlertas } from "../lib/alertas.js";
 import { isPeriodoValido, periodoParaRotulo, periodoAtual } from "../lib/periodo.js";
-import { gerarAnaliseIA } from "../lib/ai.js";
+import { gerarAnaliseIA, regenerarDestaque } from "../lib/ai.js";
+import { normalizeNarrativas } from "../lib/narrativas.js";
 import { generateReportDocx } from "../lib/docx-generator.js";
 import { generateReportPdf } from "../lib/pdf-generator.js";
 import { initMonitoring, captureException } from "../lib/monitoring.js";
@@ -28,6 +30,11 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 // extensão (o mimetype do navegador é pouco confiável para .docx).
 const EXTENSOES_ANEXO_PERMITIDAS = new Set([".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx"]);
 const MENSAGEM_ANEXO_INVALIDO = "Tipo de arquivo não suportado. Envie PDF, imagem (PNG/JPG/WEBP) ou documento Word (.doc/.docx).";
+
+// PDF escaneado (sem texto extraível) é enviado inteiro à API como documento por
+// visão. Base64 infla tokens de entrada, então limitamos o tamanho do arquivo:
+// acima disso, avisamos na UI em vez de mandar o PDF para a IA.
+const VISION_PDF_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
 // Schemas de validação das rotas de escrita.
 const clientSchema = z.object({ nome: z.string().trim().min(1, "Nome do cliente é obrigatório") });
@@ -48,9 +55,17 @@ const patchContactSchema = z
     principal: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, "Nada para atualizar");
-const narrativaSchema = z.object({ titulo: z.string(), texto: z.string(), fonte: z.string() });
+const destaqueSchema = z.object({ titulo: z.string(), texto: z.string(), fonte: z.string() });
+const pontoAtencaoSchema = z.object({ titulo: z.string(), texto: z.string(), severidade: z.string() });
+// narrativas aceita o shape novo (objeto) e o legado (array de destaques); é
+// normalizado para o objeto canônico antes de persistir.
+const narrativasObjSchema = z.object({
+  sumarioExecutivo: z.string().optional(),
+  destaques: z.array(destaqueSchema).optional(),
+  pontosDeAtencao: z.array(pontoAtencaoSchema).optional(),
+});
 const patchReportSchema = z.object({
-  narrativas: z.array(narrativaSchema).optional(),
+  narrativas: z.union([z.array(destaqueSchema), narrativasObjSchema]).optional(),
   selecionados: z.array(z.string()).optional(),
 });
 
@@ -100,6 +115,19 @@ async function extractPdfText(buffer) {
     return null;
   }
 }
+
+async function extractDocxText(buffer) {
+  try {
+    const mammoth = (await import("mammoth")).default;
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const isPdfFileName = (name) => path.extname(name || "").toLowerCase() === ".pdf";
+const isDocxFileName = (name) => path.extname(name || "").toLowerCase() === ".docx";
 
 /** Conta as movimentações de uma lista de relatórios, quebrando por tipo. */
 function resumirMovimentacoes(relatorios) {
@@ -192,7 +220,7 @@ function publicReportPayload(report, view) {
     kpisAnterior: view.kpisAnterior,
     panorama: view.panorama,
     movimentacoes: report.movimentacoes ?? [],
-    narrativas: report.narrativas ?? [],
+    narrativas: normalizeNarrativas(report.narrativas),
     attachmentsCount: report.attachments.length,
     hasPdf: !!report.pdfKey,
     finalizedAt: report.finalizedAt,
@@ -326,19 +354,22 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
         where: { periodo },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true, status: true, createdAt: true, finalizedAt: true },
+        select: { id: true, status: true, createdAt: true, finalizedAt: true, alertas: true },
       },
     },
   });
 
   const clientes = clients.map((c) => {
     const r = c.reports[0];
+    const alertas = Array.isArray(r?.alertas) ? r.alertas : [];
     return {
       id: c.id,
       nome: c.nome,
       status: r?.status ?? "sem_relatorio",
       reportId: r?.id ?? null,
       atualizadoEm: r?.finalizedAt ?? r?.createdAt ?? null,
+      totalAlertas: alertas.length,
+      alertasAltos: alertas.filter((a) => a.severidade === "alta").length,
     };
   });
 
@@ -348,6 +379,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     prontos: clientes.filter((c) => c.status === "pronto").length,
     emAndamento: clientes.filter((c) => emAndamento.includes(c.status)).length,
     semRelatorio: clientes.filter((c) => c.status === "sem_relatorio").length,
+    alertas: clientes.reduce((s, c) => s + c.totalAlertas, 0),
   };
 
   res.json({ periodo, mesReferencia: periodoParaRotulo(periodo), resumo, clientes });
@@ -537,7 +569,8 @@ app.get("/api/reports/:id", requireAuth, async (req, res) => {
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
   const { versao, kpis, kpisAnterior, panorama } = await buildReportView(report);
-  res.json({ ...report, versao, kpis, kpisAnterior, panorama, shareAtivo: shareTokenValido(report) });
+  // narrativas sempre no shape canônico (objeto) para a UI ler um formato só.
+  res.json({ ...report, narrativas: normalizeNarrativas(report.narrativas), versao, kpis, kpisAnterior, panorama, shareAtivo: shareTokenValido(report) });
 });
 
 // ---------------------------------------------------------------------------
@@ -728,6 +761,8 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
 
   const movimentacoes = computeDiff(processosAtuais, uploadAnterior?.processos ?? []);
   const kpis = computeKpis(processosAtuais);
+  const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
+  const alertas = computeAlertas({ movimentacoes, kpis, kpisAnterior });
 
   const report = await prisma.report.create({
     data: {
@@ -737,6 +772,7 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
       mesReferencia,
       status: "rascunho",
       movimentacoes,
+      alertas,
       createdByEmail: req.userEmail,
       createdByName: req.userName,
     },
@@ -751,7 +787,7 @@ app.post("/api/reports/upload", requireAuth, upload.single("file"), async (req, 
   // Número da versão deste relatório na linha do tempo do cliente.
   const versao = await prisma.report.count({ where: { clientId } });
 
-  res.status(201).json({ reportId: report.id, versao, kpis, movimentacoes, leitura });
+  res.status(201).json({ reportId: report.id, versao, kpis, movimentacoes, alertas, leitura });
 });
 
 // ---------------------------------------------------------------------------
@@ -785,6 +821,8 @@ app.put("/api/reports/:id/spreadsheet", requireAuth, upload.single("file"), asyn
   const uploadAnterior = await findUploadAnterior(report.clientId, report.upload.periodo, report.upload.uploadedAt);
   const movimentacoes = computeDiff(processosNovos, uploadAnterior?.processos ?? []);
   const kpis = computeKpis(processosNovos);
+  const kpisAnterior = uploadAnterior ? computeKpis(uploadAnterior.processos) : null;
+  const alertas = computeAlertas({ movimentacoes, kpis, kpisAnterior });
 
   // Chaves antigas a limpar do Storage depois de trocar os registros.
   const chavesAntigas = [report.upload.fileKey, report.docxKey].filter(Boolean);
@@ -803,6 +841,7 @@ app.put("/api/reports/:id/spreadsheet", requireAuth, upload.single("file"), asyn
     where: { id: report.id },
     data: {
       movimentacoes,
+      alertas,
       status: "rascunho",
       narrativas: Prisma.DbNull,
       docxKey: null,
@@ -815,7 +854,7 @@ app.put("/api/reports/:id/spreadsheet", requireAuth, upload.single("file"), asyn
   }
 
   await removeFiles(chavesAntigas);
-  res.json({ reportId: report.id, kpis, movimentacoes, leitura });
+  res.json({ reportId: report.id, kpis, movimentacoes, alertas, leitura });
 });
 
 // ---------------------------------------------------------------------------
@@ -870,7 +909,23 @@ app.post("/api/reports/:id/attachments", requireAuth, upload.single("file"), asy
   }
 
   const { key: fileKey } = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
-  const extractedText = req.file.mimetype === "application/pdf" ? await extractPdfText(req.file.buffer) : null;
+
+  // Extrai texto conforme o tipo: PDF via pdf-parse, .docx via mammoth.
+  let extractedText = null;
+  if (isPdfFileName(req.file.originalname)) extractedText = await extractPdfText(req.file.buffer);
+  else if (isDocxFileName(req.file.originalname)) extractedText = await extractDocxText(req.file.buffer);
+
+  // Aviso claro na UI quando o anexo não vai (ou vai só parcialmente) para a IA.
+  let aviso = null;
+  if (isPdfFileName(req.file.originalname) && !extractedText) {
+    // PDF escaneado (sem texto): será lido por visão, salvo se for grande demais.
+    aviso =
+      req.file.size > VISION_PDF_MAX_BYTES
+        ? "PDF sem texto e acima de 5 MB: não será enviado à IA. Reduza o arquivo para que ele seja analisado por visão."
+        : "PDF sem texto extraível — será lido pela IA por visão (imagem).";
+  } else if (ext === ".doc") {
+    aviso = "Arquivos .doc antigos não têm o texto lido pela IA. Converta para .docx ou PDF para incluí-lo na análise.";
+  }
 
   const attachment = await prisma.attachment.create({
     data: {
@@ -882,7 +937,7 @@ app.post("/api/reports/:id/attachments", requireAuth, upload.single("file"), asy
     },
   });
 
-  res.status(201).json(attachment);
+  res.status(201).json({ ...attachment, aviso });
 });
 
 app.delete("/api/reports/:id/attachments/:attachmentId", requireAuth, async (req, res) => {
@@ -906,7 +961,51 @@ app.delete("/api/reports/:id/attachments/:attachmentId", requireAuth, async (req
  * demorar. Marca o status conforme o resultado: "rascunho" (concluída) ou
  * "erro" (falhou) — o frontend acompanha por polling em GET /api/reports/:id.
  */
-async function analisarReportEmBackground(reportId) {
+/**
+ * Reúne todo o contexto que a IA recebe sobre um report (KPIs, panorama,
+ * movimentações e documentos anexados). Compartilhado entre a análise completa
+ * e a regeneração de um destaque para não duplicar a montagem.
+ *
+ * Documentos: anexos com texto extraído (PDF com texto ou .docx) entram como
+ * `documentosTexto`; PDFs sem texto (escaneados) entram como `documentosPdf`
+ * (base64) para leitura por visão, respeitando VISION_PDF_MAX_BYTES.
+ * `report` precisa incluir `client` e `attachments`.
+ */
+async function buildAnalysisContext(report) {
+  const processos = await prisma.processo.findMany({ where: { uploadId: report.uploadId } });
+  const kpis = computeKpis(processos);
+  const panorama = computePanorama(processos);
+
+  const documentosTexto = report.attachments
+    .filter((a) => a.extractedText)
+    .map((a) => ({ processoNumero: a.processoNumero, fileName: a.fileName, texto: a.extractedText.slice(0, 6000) }));
+
+  // PDFs escaneados (sem texto): baixa do Storage e envia como documento por
+  // visão, pulando os que passam do limite de tamanho (já avisado no upload).
+  const documentosPdf = [];
+  for (const a of report.attachments) {
+    if (a.extractedText || !isPdfFileName(a.fileName)) continue;
+    try {
+      const buffer = await downloadFile(a.fileKey);
+      if (buffer.length > VISION_PDF_MAX_BYTES) continue;
+      documentosPdf.push({ processoNumero: a.processoNumero, fileName: a.fileName, base64: Buffer.from(buffer).toString("base64") });
+    } catch (err) {
+      console.error("Falha ao baixar anexo para visão:", a.fileKey, err);
+    }
+  }
+
+  return {
+    cliente: report.client.nome,
+    mesReferencia: report.mesReferencia,
+    kpis,
+    panorama,
+    movimentacoes: report.movimentacoes,
+    documentosTexto,
+    documentosPdf,
+  };
+}
+
+async function analisarReportEmBackground(reportId, instrucao) {
   try {
     const report = await prisma.report.findUnique({
       where: { id: reportId },
@@ -914,19 +1013,8 @@ async function analisarReportEmBackground(reportId) {
     });
     if (!report) return;
 
-    const documentosTexto = report.attachments
-      .filter((a) => a.extractedText)
-      .map((a) => ({ processoNumero: a.processoNumero, fileName: a.fileName, texto: a.extractedText.slice(0, 6000) }));
-
-    const kpis = computeKpis(await prisma.processo.findMany({ where: { uploadId: report.uploadId } }));
-
-    const narrativas = await gerarAnaliseIA({
-      cliente: report.client.nome,
-      mesReferencia: report.mesReferencia,
-      kpis,
-      movimentacoes: report.movimentacoes,
-      documentosTexto,
-    });
+    const contexto = await buildAnalysisContext(report);
+    const narrativas = await gerarAnaliseIA({ ...contexto, instrucao });
 
     await prisma.report.update({ where: { id: reportId }, data: { narrativas, status: "rascunho" } });
   } catch (err) {
@@ -939,13 +1027,50 @@ app.post("/api/reports/:id/analyze", requireAuth, async (req, res) => {
   const report = await prisma.report.findUnique({ where: { id: req.params.id }, select: { id: true } });
   if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
 
+  // Instrução livre opcional do usuário para guiar a análise (F12).
+  const instrucao = typeof req.body?.instrucao === "string" ? req.body.instrucao.slice(0, 2000) : undefined;
+
   // Marca "analisando" e limpa a análise anterior antes de responder, para o
   // polling do frontend saber que uma nova análise está em andamento.
   await prisma.report.update({ where: { id: report.id }, data: { status: "analisando", narrativas: Prisma.DbNull } });
 
   // Dispara a análise fora do request e responde na hora (o frontend faz polling).
-  runInBackground(analisarReportEmBackground(report.id));
+  runInBackground(analisarReportEmBackground(report.id, instrucao));
   res.status(202).json({ status: "analisando" });
+});
+
+// Regenera UM destaque específico (F12). Chamada focada e síncrona (bem menor
+// que a análise inteira): rebuilda o contexto do report, manda o destaque atual
+// + a instrução do usuário e devolve só o item reescrito. Não persiste — o
+// frontend atualiza o estado local e grava no finalize (como a edição de texto).
+app.post("/api/reports/:id/regenerate-destaque", requireAuth, async (req, res) => {
+  const report = await prisma.report.findUnique({
+    where: { id: req.params.id },
+    include: { client: true, attachments: true },
+  });
+  if (!report) return res.status(404).json({ error: "Relatório não encontrado" });
+
+  const { destaqueAtual, outrosDestaques, instrucao } = req.body ?? {};
+  if (!destaqueAtual || typeof destaqueAtual !== "object") {
+    return res.status(400).json({ error: "destaqueAtual é obrigatório." });
+  }
+
+  // Só o texto extraído entra aqui (não reenviamos PDFs por visão numa chamada
+  // barata de um único item) — mantém custo/latência baixos.
+  const { cliente, mesReferencia, kpis, panorama, movimentacoes, documentosTexto } = await buildAnalysisContext(report);
+  const destaque = await regenerarDestaque({
+    cliente,
+    mesReferencia,
+    kpis,
+    panorama,
+    movimentacoes,
+    documentosTexto,
+    destaqueAtual,
+    outrosDestaques: Array.isArray(outrosDestaques) ? outrosDestaques : [],
+    instrucao: typeof instrucao === "string" ? instrucao.slice(0, 2000) : undefined,
+  });
+
+  res.json({ destaque });
 });
 
 app.patch("/api/reports/:id", requireAuth, async (req, res) => {
@@ -955,7 +1080,8 @@ app.patch("/api/reports/:id", requireAuth, async (req, res) => {
   const report = await prisma.report.update({
     where: { id: req.params.id },
     data: {
-      ...(narrativas ? { narrativas } : {}),
+      // Guarda sempre no shape canônico (objeto), mesmo se veio o array legado.
+      ...(narrativas ? { narrativas: normalizeNarrativas(narrativas) } : {}),
       ...(selecionados ? { selecionados } : {}),
     },
   });
@@ -986,7 +1112,7 @@ app.post("/api/reports/:id/finalize", requireAuth, async (req, res) => {
     versao,
     kpis,
     kpisAnterior,
-    narrativas: report.narrativas ?? [],
+    narrativas: normalizeNarrativas(report.narrativas),
     movimentacoes: report.movimentacoes ?? [],
     panorama,
     totalAnexos: report.attachments.length,

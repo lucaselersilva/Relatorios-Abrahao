@@ -112,7 +112,36 @@ cliente]** ou a tela do relatório para testar a entrega:
    cliente mostra o gráfico de evolução mensal (valor envolvido, provisão e nº
    de processos).
 
-## 6. Testando com planilhas reais
+## 6. Inteligência (Fase 3)
+
+Estas melhorias aparecem no assistente de novo relatório e no dashboard. A
+**análise real** exige `ANTHROPIC_API_KEY` no `.env` (sem chave, tudo funciona
+em modo mock, com textos de exemplo já no shape novo).
+
+1. **Sumário executivo + pontos de atenção.** Ao rodar a análise, além dos
+   destaques em cartões o relatório passa a ter um **parágrafo de sumário
+   executivo** e uma seção **"Pontos de atenção"** (cartões coloridos por
+   severidade: alta/média/baixa). Aparecem na visualização web, no `.docx` e no
+   PDF. Os pontos de atenção seguem critérios objetivos (ex.: processos sem
+   provisão, concentração de risco por área).
+2. **Ler .docx e PDFs escaneados.** Na etapa "Documentos", anexe um `.docx`
+   (o texto é lido via `mammoth`) ou um **PDF escaneado sem texto** (é enviado à
+   IA por visão). PDFs sem texto acima de 5 MB não vão à IA — a UI avisa. `.doc`
+   antigo também é avisado (converta para `.docx`/PDF).
+3. **Instruções para a IA + regenerar destaque.** Ainda em "Documentos", há um
+   campo **"Instruções para a IA"** (ex.: "seja mais conciso", "foque no risco
+   trabalhista") que guia a análise. Na etapa da análise, cada destaque tem um
+   botão **"Regenerar"** que reescreve só aquele item (respeitando a instrução).
+4. **Alertas automáticos.** Logo após o upload, regras **determinísticas** (sem
+   IA) geram alertas: novo processo ≥ R$ 1 mi, queda de provisão total > 20% vs.
+   mês anterior, e processo que sumiu da planilha sem status de encerramento.
+   Aparecem em **"O que mudou"** (assistente) e no **dashboard** (banner + badge
+   por cliente).
+
+> Após atualizar (git pull) rode `npm install` (nova dependência `mammoth`) e
+> `npm run db:migrate` (nova coluna `Report.alertas`).
+
+## 7. Testando com planilhas reais
 
 A planilha só precisa ter uma linha de cabeçalho com pelo menos uma coluna de
 **número do processo**. O leitor reconhece variações comuns de nome de coluna

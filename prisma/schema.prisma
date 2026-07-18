@@ -87,7 +87,11 @@ model Report {
   mesReferencia  String
   status         String    @default("rascunho") // rascunho | analisando | erro | pronto
   movimentacoes  Json?
+  // narrativas: análise da IA no shape { sumarioExecutivo, destaques[], pontosDeAtencao[] }
+  // (F10). Registros antigos podem ser um array de destaques — ver lib/narrativas.js.
   narrativas     Json?
+  // alertas: alertas determinísticos pós-upload (F13) — ver lib/alertas.js.
+  alertas        Json?
   selecionados   Json?
   docxKey        String?
   pdfKey         String?

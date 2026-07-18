@@ -68,7 +68,14 @@ export const api = {
   removeAttachment: (reportId, attachmentId) =>
     request(`/api/reports/${reportId}/attachments/${attachmentId}`, { method: "DELETE" }),
 
-  analyzeReport: (reportId) => request(`/api/reports/${reportId}/analyze`, { method: "POST" }),
+  analyzeReport: (reportId, instrucao) =>
+    request(`/api/reports/${reportId}/analyze`, { method: "POST", body: JSON.stringify(instrucao ? { instrucao } : {}) }),
+
+  regenerateDestaque: (reportId, { destaqueAtual, outrosDestaques, instrucao }) =>
+    request(`/api/reports/${reportId}/regenerate-destaque`, {
+      method: "POST",
+      body: JSON.stringify({ destaqueAtual, outrosDestaques, instrucao }),
+    }),
 
   updateReport: (reportId, data) => request(`/api/reports/${reportId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
