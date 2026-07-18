@@ -412,10 +412,29 @@ app.get("/api/clients/:id", requireAuth, async (req, res) => {
     orderBy: [{ principal: "desc" }, { nome: "asc" }],
   });
 
+  // Série histórica por período (para o gráfico de evolução): valor envolvido,
+  // provisão e nº de processos, um ponto por mês, do mais antigo ao mais recente.
+  const uploadsSerie = await prisma.upload.findMany({
+    where: { clientId: client.id, periodo: { not: null } },
+    orderBy: { periodo: "asc" },
+    include: { processos: true },
+  });
+  const evolucao = uploadsSerie.map((u) => {
+    const k = computeKpis(u.processos);
+    return {
+      periodo: u.periodo,
+      mesReferencia: periodoParaRotulo(u.periodo),
+      processos: k.processos,
+      valorEnvolvido: k.valorEnvolvidoNum,
+      provisao: k.provisaoNum,
+    };
+  });
+
   res.json({
     client: { id: client.id, nome: client.nome, createdAt: client.createdAt },
     kpisAtuais,
     contacts,
+    evolucao,
     versoes: [...versoes].reverse(), // mais recente primeiro para exibição
   });
 });

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api.js";
 import EnviarEmailModal from "../components/EnviarEmailModal.jsx";
+import EvolutionChart from "../components/EvolutionChart.jsx";
 
 const NAVY = "#142B4B";
 
@@ -244,6 +245,12 @@ export default function ClienteDetalhe() {
           </div>
         </>
       )}
+
+      {/* Evolução da carteira (série mensal) */}
+      <div className="text-[12px] font-semibold text-[#44546A] uppercase tracking-wide mb-3">Evolução da carteira</div>
+      <div className="mb-10">
+        <EvolutionChart data={data.evolucao ?? []} />
+      </div>
 
       {/* Contatos do cliente (destinatários dos relatórios) */}
       <div className="flex items-center gap-2 mb-3">
