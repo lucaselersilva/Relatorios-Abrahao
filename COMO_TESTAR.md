@@ -85,7 +85,34 @@ Isso cria em `exemplos/`:
    **movimentações por período** (3/6/12 meses) e a **linha do tempo das
    versões** (v1, v2) com download.
 
-## 5. Testando com planilhas reais
+## 5. Entrega ao cliente (Fase 2)
+
+Depois de finalizar um relatório (status **Pronto**), abra **Clientes → [o
+cliente]** ou a tela do relatório para testar a entrega:
+
+1. **Contatos.** Na página do cliente, cadastre um ou mais contatos (nome +
+   e-mail); marque um como **principal**. São os destinatários do relatório.
+2. **PDF.** Todo relatório finalizado agora sai também em **PDF** (mesmo visual
+   do `.docx`, abre no celular sem Word). Botão "Baixar PDF" no fim do
+   assistente, na página do cliente, no histórico e na tela do relatório.
+3. **Link seguro.** Na tela do relatório, clique **"Gerar link para o cliente"**:
+   gera uma URL `/r/…` que abre o relatório no navegador **sem login**, válida
+   por 30 dias (dá para copiar, renovar e revogar). Abra o link numa aba
+   anônima para conferir. Link inválido/expirado mostra "não encontrado".
+4. **Enviar ao cliente.** Botão "Enviar ao cliente" (fim do assistente e na
+   página do cliente). Escolha o(s) contato(s) e envie.
+   - Sem provedor de e-mail configurado (padrão), o botão **abre o e-mail já
+     preenchido no seu próprio cliente de e-mail** (Gmail/Outlook), com o link
+     seguro — você revisa e envia. O envio fica registrado na linha do tempo do
+     cliente.
+   - Para envio automático pelo servidor (com o PDF anexado), veja
+     `RESEND_API_KEY`/`EMAIL_FROM` no `.env.example`.
+   - **Nunca** teste com o e-mail de um cliente real — use um endereço seu.
+5. **Evolução da carteira.** Com dois ou mais meses enviados, a página do
+   cliente mostra o gráfico de evolução mensal (valor envolvido, provisão e nº
+   de processos).
+
+## 6. Testando com planilhas reais
 
 A planilha só precisa ter uma linha de cabeçalho com pelo menos uma coluna de
 **número do processo**. O leitor reconhece variações comuns de nome de coluna
